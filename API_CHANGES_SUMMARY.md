@@ -614,12 +614,66 @@ curl https://us-central1-nufit-67bf0.cloudfunctions.net/api/v1/users/USER_ID/nut
 
 ---
 
+## 📝 5. Field Names - UPPERCASE Format
+
+### What Changed
+All registration field names now use **UPPERCASE** format exactly as specified, stored without transformation.
+
+### Field Name Updates
+
+#### Phase 2 - Diet Information
+- `PREFERENCE` - Dietary preference (Vegetarian, Vegan, etc.)
+- `ALLERGIES` - Food allergies
+- `WINTAKE` - Water intake in liters
+- `FPREFERENCE` - Preferred foods
+- `USUPPLEMENTS` - Uses supplements (Yes/No)
+- `SINTAKE` - Supplement details
+- `GOAL` - Fitness goal (required)
+- `MEALSPERDAY` - Meals per day (1-8)
+- `PETIMES` - Preferred eating times
+- `SNACKHABITS` - Snacking habits
+- `FOODDISLIKES` - Foods to avoid
+- `WILLINGNESS` - Willingness to try new foods
+
+#### Phase 3 - Health Information
+- `MCONDITIONS` - Medical conditions
+- `ALLERGIES` - Medical allergies
+- `SMOKINGHABIT` - Smoking status
+- `SDURATION` - Sleep duration (0-24 hours)
+- `STRESSLEVEL` - Stress level
+- `PINJURIES` - Past injuries
+- `MEDICATIONS` - Current medications
+- `CALCOHOL` - Consumes alcohol (Yes/No)
+- `LALCOHOL` - Level of alcohol consumption
+- `OTHERISSUE` - Other health issues
+
+#### Phase 4 - Exercise Preference
+- `FGOAL` - Fitness goal
+- `WFREQUENCY` - Workout frequency per week
+- `WPREFERREDT` - Preferred workout time
+- `WSETTING` - Workout setting (Gym/Home/Outdoor)
+- `WPREFERREDTY` - Preferred workout types
+- `WDURATION` - Workout duration (minutes)
+- `EACCESS` - Equipment access
+- `WNOTIFICATION` - Workout notifications (Yes/No)
+
+#### Phase 5 - Weekly Exercise
+- `weeklyActivity` - Object with Monday-Sunday
+  - Each day: `activityName`, `duration` (0-300), `calories` (0-2000)
+
+### Why This Change?
+- Ensures exact field name match with mobile app requirements
+- Eliminates field name transformation issues
+- All fields stored exactly as received from API requests
+
+---
+
 ## 📞 Support
 
 **Questions about these changes?**
 - Email: chep1987@gmail.com
-- Full Documentation: See `DEVELOPER_INTEGRATION_GUIDE.md`
-- Implementation Details: See `IMPLEMENTATION_SUMMARY.md`
+- Full Documentation: See `API_DOCUMENTATION.md`
+- Quick Reference: See `API_QUICK_REFERENCE.md`
 
 **Found a bug?**
 - Create an issue in the GitHub repository
