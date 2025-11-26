@@ -820,7 +820,7 @@ const response = await apiCall(
 **Complete Example:** See `complete-workflow-demo.js` file
 **Testing Guide:** See `TESTING_GUIDE.md` file
 
-**Questions?** Contact: chep1987@gmail.com
+**Questions?** Contact: cshep1987@gmail.com
 
 ---
 
@@ -828,7 +828,7 @@ const response = await apiCall(
 
 ### Getting Firebase API Key (One-Time Setup)
 - [ ] **Option A:** Contact Nufit owner for Firebase config (for testing)
-  - Email: chep1987@gmail.com
+  - Email: cshep1987@gmail.com
   - Ask for: Firebase configuration object
   
 - [ ] **Option B:** Create your own Firebase project (for production app)
