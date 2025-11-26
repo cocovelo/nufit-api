@@ -38,20 +38,215 @@ This guide shows you **exactly** how to integrate the Nufit API into your app, f
 
 ## Step-by-Step Integration
 
-### Step 1: User Registration
+### Step 1: User Registration (5-Phase Progressive System)
+
+**Important:** Registration is now split into 5 phases for better UX. All phases must be completed before users can generate nutrition plans.
+
+---
+
+#### **Phase 1: Basic Information**
 
 **What to Submit:**
 ```json
 {
-  "email": "user@example.com",
-  "password": "SecurePass123!",
-  "name": "John Doe",
-  "age": 30,
-  "gender": "male",
-  "height": 180,
-  "weight": 75,
-  "goal": "maintain",
-  "weeklyActivity": {
+  "NAME": "John Doe",
+  "EMAIL": "user@example.com",
+  "MOBILE": "+1234567890",
+  "ADDRESS": "123 Main St, City, Country",
+  "PASSKEY": "SecurePass123!"
+}
+```
+
+**API Call:**
+```javascript
+const registerPhase1 = async (basicInfo) => {
+  const response = await fetch(
+    'https://us-central1-nufit-67bf0.cloudfunctions.net/api/v1/users/register',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(basicInfo)
+    }
+  );
+  return await response.json();
+};
+
+// Usage
+const result = await registerPhase1({
+  NAME: "John Doe",
+  EMAIL: "user@example.com",
+  MOBILE: "+1234567890",
+  ADDRESS: "123 Main St",
+  PASSKEY: "SecurePass123!"
+});
+console.log('User ID:', result.userId); // Save this!
+```
+
+**What You Receive:**
+```json
+{
+  "success": true,
+  "message": "User registered successfully (Phase 1/5)",
+  "userId": "abc123xyz789",
+  "nextStep": "Complete diet information at PUT /v1/users/{userId}/diet-information",
+  "registrationProgress": {
+    "basicInfo": true,
+    "dietInformation": false,
+    "healthInformation": false,
+    "exercisePreference": false,
+    "weeklyExercise": false,
+    "complete": false
+  }
+}
+```
+
+---
+
+#### **Phase 2: Diet Information**
+
+**What to Submit:**
+```json
+{
+  "GOAL": "lose weight",
+  "FOOD_ALLERGIES": "peanuts, shellfish",
+  "FOOD_LIKES": "chicken, vegetables, rice",
+  "FOOD_DISLIKES": "mushrooms, olives",
+  "PROTEIN_PERCENTAGE": 0.4,
+  "CARBS_PERCENTAGE": 0.35,
+  "FAT_PERCENTAGE": 0.25
+}
+```
+
+**API Call:**
+```javascript
+const updateDietInfo = async (userId, token, dietInfo) => {
+  const response = await fetch(
+    `https://us-central1-nufit-67bf0.cloudfunctions.net/api/v1/users/${userId}/diet-information`,
+    {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify(dietInfo)
+    }
+  );
+  return await response.json();
+};
+
+// Usage (after Phase 1 and Firebase sign-in)
+const result = await updateDietInfo(userId, authToken, {
+  GOAL: "lose weight",
+  FOOD_ALLERGIES: "peanuts",
+  FOOD_LIKES: "chicken, rice",
+  FOOD_DISLIKES: "mushrooms",
+  PROTEIN_PERCENTAGE: 0.4,
+  CARBS_PERCENTAGE: 0.35,
+  FAT_PERCENTAGE: 0.25
+});
+```
+
+**What You Receive:**
+```json
+{
+  "success": true,
+  "message": "Diet information updated successfully (Phase 2/5)",
+  "nextStep": "Complete health information at PUT /v1/users/{userId}/health-information",
+  "registrationProgress": {
+    "basicInfo": true,
+    "dietInformation": true,
+    "healthInformation": false,
+    "exercisePreference": false,
+    "weeklyExercise": false,
+    "complete": false
+  }
+}
+```
+
+---
+
+#### **Phase 3: Health Information**
+
+**What to Submit:**
+```json
+{
+  "AGE": 30,
+  "GENDER": "male",
+  "HEIGHT": 180,
+  "WEIGHT": 75,
+  "FITNESS_LEVEL": "intermediate"
+}
+```
+
+**API Call:**
+```javascript
+const updateHealthInfo = async (userId, token, healthInfo) => {
+  const response = await fetch(
+    `https://us-central1-nufit-67bf0.cloudfunctions.net/api/v1/users/${userId}/health-information`,
+    {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify(healthInfo)
+    }
+  );
+  return await response.json();
+};
+
+// Usage
+const result = await updateHealthInfo(userId, authToken, {
+  AGE: 30,
+  GENDER: "male",
+  HEIGHT: 180,
+  WEIGHT: 75,
+  FITNESS_LEVEL: "intermediate"
+});
+```
+
+---
+
+#### **Phase 4: Exercise Preference**
+
+**What to Submit:**
+```json
+{
+  "EXERCISE_PREFERENCE": "gym, running, swimming, cycling"
+}
+```
+
+**API Call:**
+```javascript
+const updateExercisePref = async (userId, token, exercisePref) => {
+  const response = await fetch(
+    `https://us-central1-nufit-67bf0.cloudfunctions.net/api/v1/users/${userId}/exercise-preference`,
+    {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify(exercisePref)
+    }
+  );
+  return await response.json();
+};
+
+// Usage
+const result = await updateExercisePref(userId, authToken, {
+  EXERCISE_PREFERENCE: "gym, running, swimming"
+});
+```
+
+---
+
+#### **Phase 5: Weekly Exercise Schedule (Final Phase)**
+
+**What to Submit:**
+```json
+{
+  "WEEKLY_EXERCISE": {
     "Monday": { "activityName": "Running", "duration": 45, "calories": 400 },
     "Tuesday": { "activityName": "Rest", "duration": 0, "calories": 0 },
     "Wednesday": { "activityName": "Gym", "duration": 60, "calories": 350 },
@@ -65,50 +260,147 @@ This guide shows you **exactly** how to integrate the Nufit API into your app, f
 
 **API Call:**
 ```javascript
-const registerUser = async (userData) => {
+const updateWeeklyExercise = async (userId, token, weeklyExercise) => {
   const response = await fetch(
-    'https://us-central1-nufit-67bf0.cloudfunctions.net/api/v1/users/register',
+    `https://us-central1-nufit-67bf0.cloudfunctions.net/api/v1/users/${userId}/weekly-exercise`,
     {
-      method: 'POST',
+      method: 'PUT',
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
       },
-      body: JSON.stringify(userData)
+      body: JSON.stringify(weeklyExercise)
     }
   );
-  
-  const data = await response.json();
-  return data;
+  return await response.json();
 };
+
+// Usage
+const result = await updateWeeklyExercise(userId, authToken, {
+  WEEKLY_EXERCISE: {
+    Monday: { activityName: "Running", duration: 45, calories: 400 },
+    Tuesday: { activityName: "Rest", duration: 0, calories: 0 },
+    Wednesday: { activityName: "Gym", duration: 60, calories: 350 },
+    Thursday: { activityName: "Rest", duration: 0, calories: 0 },
+    Friday: { activityName: "Swimming", duration: 30, calories: 300 },
+    Saturday: { activityName: "Cycling", duration: 90, calories: 500 },
+    Sunday: { activityName: "Yoga", duration: 45, calories: 150 }
+  }
+});
 ```
 
 **What You Receive:**
 ```json
 {
   "success": true,
-  "message": "User registered successfully",
-  "userId": "abc123xyz789",
-  "user": {
-    "email": "user@example.com",
-    "name": "John Doe",
-    "age": 30,
-    "gender": "male",
-    "height": 180,
-    "weight": 75,
-    "goal": "maintain",
-    "weeklyActivity": {
-      "Monday": { "activityName": "Running", "duration": 45, "calories": 400 },
-      "Tuesday": { "activityName": "Rest", "duration": 0, "calories": 0 },
-      "Wednesday": { "activityName": "Gym", "duration": 60, "calories": 350 },
-      "Thursday": { "activityName": "Rest", "duration": 0, "calories": 0 },
-      "Friday": { "activityName": "Swimming", "duration": 30, "calories": 300 },
-      "Saturday": { "activityName": "Cycling", "duration": 90, "calories": 500 },
-      "Sunday": { "activityName": "Yoga", "duration": 45, "calories": 150 }
-    },
-    "createdAt": "2025-11-10T14:30:00.000Z",
-    "isPremium": false
+  "message": "Registration completed successfully! You can now generate nutrition plans.",
+  "registrationProgress": {
+    "basicInfo": true,
+    "dietInformation": true,
+    "healthInformation": true,
+    "exercisePreference": true,
+    "weeklyExercise": true,
+    "complete": true
   }
 }
+```
+
+---
+
+### **Complete Registration Helper Function**
+
+```javascript
+const API_BASE = 'https://us-central1-nufit-67bf0.cloudfunctions.net/api/v1';
+
+// Complete registration flow
+const completeRegistration = async (userData) => {
+  try {
+    // Phase 1: Basic info
+    const phase1 = await fetch(`${API_BASE}/users/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        NAME: userData.name,
+        EMAIL: userData.email,
+        MOBILE: userData.mobile,
+        ADDRESS: userData.address,
+        PASSKEY: userData.password
+      })
+    });
+    const { userId } = await phase1.json();
+    
+    // Sign in with Firebase to get token
+    const userCredential = await signInWithEmailAndPassword(
+      auth, 
+      userData.email, 
+      userData.password
+    );
+    const token = await userCredential.user.getIdToken();
+    
+    // Phase 2: Diet info
+    await fetch(`${API_BASE}/users/${userId}/diet-information`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        GOAL: userData.goal,
+        FOOD_ALLERGIES: userData.allergies,
+        FOOD_LIKES: userData.likes,
+        FOOD_DISLIKES: userData.dislikes,
+        PROTEIN_PERCENTAGE: userData.proteinPct,
+        CARBS_PERCENTAGE: userData.carbsPct,
+        FAT_PERCENTAGE: userData.fatPct
+      })
+    });
+    
+    // Phase 3: Health info
+    await fetch(`${API_BASE}/users/${userId}/health-information`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        AGE: userData.age,
+        GENDER: userData.gender,
+        HEIGHT: userData.height,
+        WEIGHT: userData.weight,
+        FITNESS_LEVEL: userData.fitnessLevel
+      })
+    });
+    
+    // Phase 4: Exercise preference
+    await fetch(`${API_BASE}/users/${userId}/exercise-preference`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        EXERCISE_PREFERENCE: userData.exercisePreference
+      })
+    });
+    
+    // Phase 5: Weekly exercise (completes registration)
+    await fetch(`${API_BASE}/users/${userId}/weekly-exercise`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        WEEKLY_EXERCISE: userData.weeklyExercise
+      })
+    });
+    
+    return { userId, token };
+  } catch (error) {
+    console.error('Registration error:', error);
+    throw error;
+  }
+};
 ```
 
 ---
@@ -268,6 +560,11 @@ const result = await updateProfile(
 ### Step 4: Generate Nutrition Plan (Like generateCalorieTargets)
 
 This is the main function - it calculates calorie targets and generates a complete 7-day meal plan.
+
+**Requirements:**
+- All 5 registration phases must be completed
+- Can only generate once per 7 days (weekly updates allowed)
+- Previous plans are automatically deactivated
 
 **What to Submit:**
 Nothing! The API uses the user's profile data already saved in Firebase.

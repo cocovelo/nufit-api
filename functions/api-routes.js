@@ -1,0 +1,1802 @@
+/**
+ * API Routes for Nufit Cloud Functions
+ * Public REST API for simple read operations
+ */
+
+const express = require('express');
+const admin = require('firebase-admin');
+const rateLimit = require('express-rate-limit');
+
+// Initialize router
+const router = express.Router();
+const db = admin.firestore();
+
+// ============================================
+// MIDDLEWARE
+// ============================================
+
+/**
+ * Rate limiting middleware
+ * Limits each IP to 100 requests per 15 minutes
+ */
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100,
+  message: { error: 'Too many requests, please try again later.' }
+});
+
+/**
+ * API Key validation middleware for external developers
+ * Checks x-api-key header against Firestore apiKeys collection
+ */
+const validateApiKey = async (req, res, next) => {
+  const apiKey = req.headers['x-api-key'];
+  
+  if (!apiKey) {
+    return res.status(401).json({ 
+      error: 'Missing API key', 
+      message: 'Please provide an API key in the x-api-key header' 
+    });
+  }
+  
+  try {
+    const keyDoc = await db.collection('apiKeys').doc(apiKey).get();
+    
+    if (!keyDoc.exists) {
+      return res.status(403).json({ error: 'Invalid API key' });
+    }
+    
+    const keyData = keyDoc.data();
+    
+    if (!keyData.active) {
+      return res.status(403).json({ error: 'API key is inactive' });
+    }
+    
+    // Check if key has expired (only if expiresAt is set and not null)
+    if (keyData.expiresAt && keyData.expiresAt.toDate() < new Date()) {
+      return res.status(403).json({ error: 'API key has expired' });
+    }
+    
+    // Attach key data to request for usage tracking
+    req.apiKeyData = keyData;
+    req.apiKeyId = apiKey;
+    
+    // Update usage counter (optional - can be done async)
+    db.collection('apiKeys').doc(apiKey).update({
+      lastUsed: admin.firestore.FieldValue.serverTimestamp(),
+      requestCount: admin.firestore.FieldValue.increment(1)
+    }).catch(err => console.error('Error updating API key usage:', err));
+    
+    next();
+  } catch (error) {
+    console.error('API key validation error:', error);
+    return res.status(500).json({ error: 'Error validating API key' });
+  }
+};
+
+/**
+ * Optional Firebase Auth validation for user-specific endpoints
+ * Verifies Firebase ID token from Authorization header
+ */
+const verifyFirebaseAuth = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ 
+      error: 'Unauthorized', 
+      message: 'Missing or invalid Authorization header' 
+    });
+  }
+  
+  const token = authHeader.replace('Bearer ', '');
+  
+  try {
+    const decodedToken = await admin.auth().verifyIdToken(token);
+    req.user = decodedToken;
+    req.uid = decodedToken.uid;
+    next();
+  } catch (error) {
+    console.error('Auth verification error:', error);
+    return res.status(401).json({ 
+      error: 'Invalid token', 
+      message: 'Firebase authentication token is invalid or expired' 
+    });
+  }
+};
+
+// Apply rate limiting to all routes
+router.use(apiLimiter);
+
+// ============================================
+// PUBLIC ENDPOINTS (No Auth Required)
+// ============================================
+
+/**
+ * GET /health
+ * Health check endpoint
+ */
+router.get('/health', (req, res) => {
+  res.json({ 
+    status: 'healthy', 
+    timestamp: new Date().toISOString(),
+    version: '1.0.0'
+  });
+});
+
+/**
+ * GET /recipes/count
+ * Get document counts for all recipe collections
+ * Returns counts for breakfast, lunch, dinner, and snack recipes
+ */
+router.get('/recipes/count', async (req, res) => {
+  try {
+    const collections = [
+      'breakfast_list_full_may2025',
+      'lunch_list_full_may2025',
+      'dinner_list_full_may2025',
+      'snack_list_full_may2025'
+    ];
+
+    const counts = {};
+    const countPromises = collections.map(async (col) => {
+      const snapshot = await db.collection(col).get();
+      counts[col] = snapshot.size;
+    });
+
+    await Promise.all(countPromises);
+
+    res.json({ 
+      success: true, 
+      counts,
+      total: Object.values(counts).reduce((sum, count) => sum + count, 0)
+    });
+  } catch (error) {
+    console.error('Error counting recipes:', error);
+    res.status(500).json({ 
+      error: 'Failed to count recipes', 
+      message: error.message 
+    });
+  }
+});
+
+/**
+ * GET /recipes/:mealType
+ * Fetch recipes by meal type with pagination
+ * Query params:
+ *   - limit: number of recipes to return (default: 20, max: 100)
+ *   - offset: number of recipes to skip (default: 0)
+ *   - search: optional search term for recipe titles
+ */
+router.get('/recipes/:mealType', async (req, res) => {
+  try {
+    const { mealType } = req.params;
+    const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+    const offset = parseInt(req.query.offset) || 0;
+    const searchTerm = req.query.search;
+
+    // Validate meal type
+    const validMealTypes = ['breakfast', 'lunch', 'dinner', 'snack'];
+    if (!validMealTypes.includes(mealType.toLowerCase())) {
+      return res.status(400).json({ 
+        error: 'Invalid meal type', 
+        message: `Meal type must be one of: ${validMealTypes.join(', ')}` 
+      });
+    }
+
+    const collectionName = `${mealType.toLowerCase()}_list_full_may2025`;
+    let query = db.collection(collectionName);
+
+    // Add search filter if provided (simple title search)
+    if (searchTerm) {
+      // Note: This is a simple contains search. For production, consider using 
+      // Cloud Firestore full-text search or Algolia integration
+      query = query.where('Title', '>=', searchTerm)
+                   .where('Title', '<=', searchTerm + '\uf8ff');
+    }
+
+    // Apply pagination
+    const snapshot = await query.limit(limit).offset(offset).get();
+
+    const recipes = snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+
+    res.json({
+      success: true,
+      mealType,
+      count: recipes.length,
+      limit,
+      offset,
+      recipes
+    });
+  } catch (error) {
+    console.error(`Error fetching ${req.params.mealType} recipes:`, error);
+    res.status(500).json({ 
+      error: 'Failed to fetch recipes', 
+      message: error.message 
+    });
+  }
+});
+
+/**
+ * GET /recipes/:mealType/:recipeId
+ * Get a specific recipe by ID
+ */
+router.get('/recipes/:mealType/:recipeId', async (req, res) => {
+  try {
+    const { mealType, recipeId } = req.params;
+
+    const validMealTypes = ['breakfast', 'lunch', 'dinner', 'snack'];
+    if (!validMealTypes.includes(mealType.toLowerCase())) {
+      return res.status(400).json({ 
+        error: 'Invalid meal type' 
+      });
+    }
+
+    const collectionName = `${mealType.toLowerCase()}_list_full_may2025`;
+    const doc = await db.collection(collectionName).doc(recipeId).get();
+
+    if (!doc.exists) {
+      return res.status(404).json({ 
+        error: 'Recipe not found',
+        message: `No ${mealType} recipe found with ID: ${recipeId}` 
+      });
+    }
+
+    res.json({
+      success: true,
+      recipe: {
+        id: doc.id,
+        ...doc.data()
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching recipe:', error);
+    res.status(500).json({ 
+      error: 'Failed to fetch recipe', 
+      message: error.message 
+    });
+  }
+});
+
+// ============================================
+// USER MANAGEMENT ENDPOINTS
+// ============================================
+
+/**
+ * POST /users/register
+ * Register a new user with BASIC information only
+ * Creates Firebase Auth user and basic profile in Firestore
+ * 
+ * Phase 1 of registration - collects only essential user info
+ */
+router.post('/users/register', async (req, res) => {
+  try {
+    const {
+      NAME,
+      EMAIL,
+      MOBILE,
+      ADDRESS,
+      PASSKEY
+    } = req.body;
+
+    // Validate required fields
+    if (!NAME || !EMAIL || !PASSKEY) {
+      return res.status(400).json({
+        error: 'Missing required fields',
+        message: 'NAME, EMAIL, and PASSKEY are required'
+      });
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(EMAIL)) {
+      return res.status(400).json({
+        error: 'Invalid email format',
+        message: 'Please provide a valid email address'
+      });
+    }
+
+    // Validate password length
+    if (PASSKEY.length < 6) {
+      return res.status(400).json({
+        error: 'Password too short',
+        message: 'PASSKEY must be at least 6 characters'
+      });
+    }
+
+    // Create Firebase Auth user
+    const userRecord = await admin.auth().createUser({
+      email: EMAIL,
+      password: PASSKEY,
+      displayName: NAME
+    });
+
+    // Create basic user profile in Firestore
+    const userProfile = {
+      name: NAME,
+      email: EMAIL,
+      mobile: MOBILE || '',
+      address: ADDRESS || '',
+      
+      // Registration status tracking
+      registrationComplete: false,
+      registrationSteps: {
+        basicInfo: true,
+        dietInfo: false,
+        healthInfo: false,
+        exercisePreference: false,
+        weeklyExercise: false
+      },
+      
+      // Subscription info
+      subscribed: false,
+      subscriptionPackageId: null,
+      subscriptionStatus: 'inactive',
+      
+      // Timestamps
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    };
+
+    await db.collection('users').doc(userRecord.uid).set(userProfile);
+
+    // Generate custom token for immediate login
+    const customToken = await admin.auth().createCustomToken(userRecord.uid);
+
+    res.status(201).json({
+      success: true,
+      message: 'User registered successfully (Phase 1/5)',
+      userId: userRecord.uid,
+      email: userRecord.email,
+      customToken: customToken,
+      nextStep: 'Complete diet information at PUT /v1/users/{userId}/diet-information',
+      registrationProgress: {
+        basicInfo: true,
+        dietInfo: false,
+        healthInfo: false,
+        exercisePreference: false,
+        weeklyExercise: false,
+        complete: false
+      }
+    });
+
+  } catch (error) {
+    console.error('User registration error:', error);
+    
+    if (error.code === 'auth/email-already-exists') {
+      return res.status(409).json({
+        error: 'Email already exists',
+        message: 'A user with this email already exists'
+      });
+    }
+    
+    if (error.code === 'auth/invalid-email') {
+      return res.status(400).json({
+        error: 'Invalid email',
+        message: 'The email address is not valid'
+      });
+    }
+
+    if (error.code === 'auth/weak-password') {
+      return res.status(400).json({
+        error: 'Weak password',
+        message: 'Password should be at least 6 characters'
+      });
+    }
+    
+    res.status(500).json({
+      error: 'Registration failed',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * GET /users/:userId/profile
+ * Get user profile data
+ * Requires Firebase Auth
+ */
+router.get('/users/:userId/profile', verifyFirebaseAuth, async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    // Ensure user can only access their own profile
+    if (req.uid !== userId) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        message: 'You can only access your own profile'
+      });
+    }
+
+    const userDoc = await db.collection('users').doc(userId).get();
+
+    if (!userDoc.exists) {
+      return res.status(404).json({
+        error: 'User not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      profile: {
+        id: userDoc.id,
+        ...userDoc.data()
+      }
+    });
+
+  } catch (error) {
+    console.error('Error fetching profile:', error);
+    res.status(500).json({
+      error: 'Failed to fetch profile',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * PUT /users/:userId/profile
+ * Update user profile data (legacy endpoint - for backward compatibility)
+ * Requires Firebase Auth
+ */
+router.put('/users/:userId/profile', verifyFirebaseAuth, async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    if (req.uid !== userId) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        message: 'You can only update your own profile'
+      });
+    }
+
+    const allowedFields = [
+      'name', 'mobile', 'address'
+    ];
+
+    const updateData = {};
+    allowedFields.forEach(field => {
+      if (req.body[field] !== undefined) {
+        updateData[field] = req.body[field];
+      }
+    });
+
+    updateData.updatedAt = admin.firestore.FieldValue.serverTimestamp();
+
+    await db.collection('users').doc(userId).update(updateData);
+
+    res.json({
+      success: true,
+      message: 'Profile updated successfully'
+    });
+
+  } catch (error) {
+    console.error('Error updating profile:', error);
+    res.status(500).json({
+      error: 'Failed to update profile',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * PUT /users/:userId/diet-information
+ * Update user's diet preferences and habits
+ * Phase 2 of registration - collects dietary information
+ * Requires Firebase Auth
+ */
+router.put('/users/:userId/diet-information', verifyFirebaseAuth, async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    if (req.uid !== userId) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        message: 'You can only update your own diet information'
+      });
+    }
+
+    const {
+      PREFERENCE,
+      ALLERGIES,
+      WINTAKE,
+      FPREFERENCE,
+      USUPPLEMENTS,
+      SINTAKE,
+      GOAL,
+      MEALSPERDAY,
+      PETIMES,
+      SNACKHABITS,
+      FOODDISLIKES,
+      WILLINGNESS
+    } = req.body;
+
+    // Validate required fields
+    if (!GOAL) {
+      return res.status(400).json({
+        error: 'Missing required field',
+        message: 'GOAL is required'
+      });
+    }
+
+    // Validate goal value
+    const validGoals = ['lose weight', 'gain muscle', 'maintain'];
+    if (!validGoals.some(g => g.toLowerCase() === GOAL.toLowerCase())) {
+      return res.status(400).json({
+        error: 'Invalid GOAL',
+        message: `GOAL must be one of: ${validGoals.join(', ')}`
+      });
+    }
+
+    // Validate water intake (if provided)
+    if (WINTAKE && (isNaN(parseFloat(WINTAKE)) || parseFloat(WINTAKE) < 0)) {
+      return res.status(400).json({
+        error: 'Invalid WINTAKE',
+        message: 'Water intake must be a positive number'
+      });
+    }
+
+    // Validate meals per day (if provided)
+    if (MEALSPERDAY && (isNaN(parseInt(MEALSPERDAY)) || parseInt(MEALSPERDAY) < 1 || parseInt(MEALSPERDAY) > 8)) {
+      return res.status(400).json({
+        error: 'Invalid MEALSPERDAY',
+        message: 'Meals per day must be between 1 and 8'
+      });
+    }
+
+    const dietInfo = {
+      PREFERENCE: PREFERENCE || '',
+      ALLERGIES: ALLERGIES || '',
+      WINTAKE: WINTAKE ? parseFloat(WINTAKE) : null,
+      FPREFERENCE: FPREFERENCE || '',
+      USUPPLEMENTS: USUPPLEMENTS || '',
+      SINTAKE: SINTAKE || '',
+      GOAL: GOAL,
+      MEALSPERDAY: MEALSPERDAY ? parseInt(MEALSPERDAY) : 3,
+      PETIMES: PETIMES || '',
+      SNACKHABITS: SNACKHABITS || '',
+      FOODDISLIKES: FOODDISLIKES || '',
+      WILLINGNESS: WILLINGNESS || '',
+      'registrationSteps.dietInfo': true,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    };
+
+    await db.collection('users').doc(userId).update(dietInfo);
+
+    // Check registration progress
+    const userDoc = await db.collection('users').doc(userId).get();
+    const steps = userDoc.data().registrationSteps;
+
+    res.json({
+      success: true,
+      message: 'Diet information updated successfully (Phase 2/5)',
+      nextStep: 'Complete health information at PUT /v1/users/{userId}/health-information',
+      registrationProgress: steps
+    });
+
+  } catch (error) {
+    console.error('Error updating diet information:', error);
+    res.status(500).json({
+      error: 'Failed to update diet information',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * PUT /users/:userId/health-information
+ * Update user's health and medical information
+ * Phase 3 of registration - collects health data
+ * Requires Firebase Auth
+ */
+router.put('/users/:userId/health-information', verifyFirebaseAuth, async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    if (req.uid !== userId) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        message: 'You can only update your own health information'
+      });
+    }
+
+    const {
+      MCONDITIONS,
+      ALLERGIES,
+      SMOKINGHABIT,
+      SDURATION,
+      STRESSLEVEL,
+      PINJURIES,
+      MEDICATIONS,
+      CALCOHOL,
+      LALCOHOL,
+      OTHERISSUE
+    } = req.body;
+
+    // Validate sleep duration (if provided)
+    if (SDURATION && (isNaN(parseFloat(SDURATION)) || parseFloat(SDURATION) < 0 || parseFloat(SDURATION) > 24)) {
+      return res.status(400).json({
+        error: 'Invalid SDURATION',
+        message: 'Sleep duration must be between 0 and 24 hours'
+      });
+    }
+
+    const healthInfo = {
+      MCONDITIONS: MCONDITIONS || '',
+      ALLERGIES: ALLERGIES || '',
+      SMOKINGHABIT: SMOKINGHABIT || '',
+      SDURATION: SDURATION ? parseFloat(SDURATION) : null,
+      STRESSLEVEL: STRESSLEVEL || '',
+      PINJURIES: PINJURIES || '',
+      MEDICATIONS: MEDICATIONS || '',
+      CALCOHOL: CALCOHOL || '',
+      LALCOHOL: LALCOHOL || '',
+      OTHERISSUE: OTHERISSUE || '',
+      'registrationSteps.healthInfo': true,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    };
+
+    await db.collection('users').doc(userId).update(healthInfo);
+
+    // Check registration progress
+    const userDoc = await db.collection('users').doc(userId).get();
+    const steps = userDoc.data().registrationSteps;
+
+    res.json({
+      success: true,
+      message: 'Health information updated successfully (Phase 3/5)',
+      nextStep: 'Complete exercise preference at PUT /v1/users/{userId}/exercise-preference',
+      registrationProgress: steps
+    });
+
+  } catch (error) {
+    console.error('Error updating health information:', error);
+    res.status(500).json({
+      error: 'Failed to update health information',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * PUT /users/:userId/exercise-preference
+ * Update user's exercise preferences
+ * Phase 4 of registration - collects workout preferences
+ * Requires Firebase Auth
+ */
+router.put('/users/:userId/exercise-preference', verifyFirebaseAuth, async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    if (req.uid !== userId) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        message: 'You can only update your own exercise preferences'
+      });
+    }
+
+    const {
+      FGOAL,
+      WFREQUENCY,
+      WPREFERREDT,
+      WSETTING,
+      WPREFERREDTY,
+      WDURATION,
+      EACCESS,
+      WNOTIFICATION
+    } = req.body;
+
+    // Validate workout duration (if provided)
+    if (WDURATION && (isNaN(parseInt(WDURATION)) || parseInt(WDURATION) < 0)) {
+      return res.status(400).json({
+        error: 'Invalid WDURATION',
+        message: 'Workout duration must be a positive number'
+      });
+    }
+
+    const exercisePreference = {
+      FGOAL: FGOAL || '',
+      WFREQUENCY: WFREQUENCY || '',
+      WPREFERREDT: WPREFERREDT || '',
+      WSETTING: WSETTING || '',
+      WPREFERREDTY: WPREFERREDTY || '',
+      WDURATION: WDURATION ? parseInt(WDURATION) : null,
+      EACCESS: EACCESS || '',
+      WNOTIFICATION: WNOTIFICATION || '',
+      'registrationSteps.exercisePreference': true,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    };
+
+    await db.collection('users').doc(userId).update(exercisePreference);
+
+    // Check registration progress
+    const userDoc = await db.collection('users').doc(userId).get();
+    const steps = userDoc.data().registrationSteps;
+
+    res.json({
+      success: true,
+      message: 'Exercise preference updated successfully (Phase 4/5)',
+      nextStep: 'Complete weekly exercise schedule at PUT /v1/users/{userId}/weekly-exercise',
+      registrationProgress: steps
+    });
+
+  } catch (error) {
+    console.error('Error updating exercise preferences:', error);
+    res.status(500).json({
+      error: 'Failed to update exercise preferences',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * PUT /users/:userId/weekly-exercise
+ * Update user's weekly exercise schedule
+ * Phase 5 of registration - final step, collects weekly activity
+ * Requires Firebase Auth
+ */
+router.put('/users/:userId/weekly-exercise', verifyFirebaseAuth, async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    if (req.uid !== userId) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        message: 'You can only update your own weekly exercise schedule'
+      });
+    }
+
+    const { weeklyActivity } = req.body;
+
+    if (!weeklyActivity || typeof weeklyActivity !== 'object') {
+      return res.status(400).json({
+        error: 'Invalid weeklyActivity',
+        message: 'weeklyActivity must be an object with day-activity mappings'
+      });
+    }
+
+    const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    const validatedWeeklyActivity = {};
+    let totalWeeklyCalories = 0;
+
+    // Validate and process each day
+    for (const day of daysOfWeek) {
+      const activity = weeklyActivity[day];
+      
+      if (!activity) {
+        // Default to rest day if not provided
+        validatedWeeklyActivity[day] = {
+          activityName: 'Rest',
+          duration: 0,
+          calories: 0
+        };
+        continue;
+      }
+
+      // Validate activity structure
+      const activityName = activity.activityName || 'Rest';
+      const duration = parseInt(activity.duration) || 0;
+      const calories = parseInt(activity.calories) || 0;
+
+      if (duration < 0 || duration > 300) {
+        return res.status(400).json({
+          error: `Invalid duration for ${day}`,
+          message: 'Duration must be between 0 and 300 minutes'
+        });
+      }
+
+      if (calories < 0 || calories > 2000) {
+        return res.status(400).json({
+          error: `Invalid calories for ${day}`,
+          message: 'Calories must be between 0 and 2000'
+        });
+      }
+
+      validatedWeeklyActivity[day] = {
+        activityName,
+        duration,
+        calories
+      };
+
+      totalWeeklyCalories += calories;
+    }
+
+    // Update user document - mark registration as complete
+    await db.collection('users').doc(userId).update({
+      weeklyActivity: validatedWeeklyActivity,
+      totalWeeklyActivityCalories: totalWeeklyCalories,
+      'registrationSteps.weeklyExercise': true,
+      registrationComplete: true,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    res.json({
+      success: true,
+      message: 'Weekly exercise schedule updated successfully. Registration complete!',
+      registrationComplete: true,
+      totalWeeklyCalories: totalWeeklyCalories,
+      nextStep: 'You can now generate your personalized nutrition plan'
+    });
+
+  } catch (error) {
+    console.error('Error updating weekly exercise:', error);
+    res.status(500).json({
+      error: 'Failed to update weekly exercise',
+      message: error.message
+    });
+  }
+});
+
+// ============================================
+// STRIPE PAYMENT ENDPOINTS
+// ============================================
+
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY || require('firebase-functions').config().stripe?.secret_key);
+
+/**
+ * POST /payments/create-checkout
+ * Create Stripe checkout session for subscription
+ * Requires Firebase Auth
+ */
+router.post('/payments/create-checkout', verifyFirebaseAuth, async (req, res) => {
+  try {
+    const uid = req.uid;
+    const { email, priceId } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        error: 'Email is required'
+      });
+    }
+
+    const userDoc = await db.collection('users').doc(uid).get();
+    const userData = userDoc.data();
+
+    let customerId = userData?.stripeCustomerId;
+
+    // Create Stripe customer if doesn't exist
+    if (!customerId) {
+      const customer = await stripe.customers.create({
+        email: email,
+        metadata: { firebaseUID: uid }
+      });
+
+      customerId = customer.id;
+
+      await db.collection('users').doc(uid).set({
+        stripeCustomerId: customerId
+      }, { merge: true });
+    }
+
+    // Create checkout session
+    const session = await stripe.checkout.sessions.create({
+      mode: 'subscription',
+      payment_method_types: ['card'],
+      line_items: [{
+        price: priceId || 'price_1RJx3cDNiU7g4QNyVyT5vujC',
+        quantity: 1
+      }],
+      success_url: req.body.successUrl || 'https://nufit-67bf0.web.app/success.html',
+      cancel_url: req.body.cancelUrl || 'https://nufit-67bf0.web.app/cancel.html',
+      customer: customerId
+    });
+
+    res.json({
+      success: true,
+      sessionId: session.id,
+      sessionUrl: session.url
+    });
+
+  } catch (error) {
+    console.error('Stripe checkout error:', error);
+    res.status(500).json({
+      error: 'Failed to create checkout session',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * POST /payments/cancel-subscription
+ * Cancel user's active subscription
+ * Requires Firebase Auth
+ */
+router.post('/payments/cancel-subscription', verifyFirebaseAuth, async (req, res) => {
+  try {
+    const uid = req.uid;
+
+    const userDoc = await db.collection('users').doc(uid).get();
+    const userData = userDoc.data();
+
+    const subscriptionId = userData?.subscriptionId;
+
+    if (!subscriptionId) {
+      return res.status(404).json({
+        error: 'No active subscription found'
+      });
+    }
+
+    // Cancel subscription at period end
+    await stripe.subscriptions.update(subscriptionId, {
+      cancel_at_period_end: false
+    });
+
+    // Delete subscription immediately
+    await stripe.subscriptions.del(subscriptionId);
+
+    // Update Firestore
+    await db.collection('users').doc(uid).update({
+      subscribed: false,
+      subscriptionId: admin.firestore.FieldValue.delete(),
+      currentPeriodEnd: admin.firestore.FieldValue.delete()
+    });
+
+    res.json({
+      success: true,
+      message: 'Subscription cancelled successfully'
+    });
+
+  } catch (error) {
+    console.error('Cancel subscription error:', error);
+    res.status(500).json({
+      error: 'Failed to cancel subscription',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * GET /payments/subscription-status
+ * Get user's subscription status
+ * Requires Firebase Auth
+ */
+router.get('/payments/subscription-status', verifyFirebaseAuth, async (req, res) => {
+  try {
+    const uid = req.uid;
+
+    const userDoc = await db.collection('users').doc(uid).get();
+    const userData = userDoc.data();
+
+    res.json({
+      success: true,
+      subscribed: userData?.subscribed || false,
+      subscriptionId: userData?.subscriptionId || null,
+      currentPeriodEnd: userData?.currentPeriodEnd || null,
+      stripeCustomerId: userData?.stripeCustomerId || null
+    });
+
+  } catch (error) {
+    console.error('Error fetching subscription status:', error);
+    res.status(500).json({
+      error: 'Failed to fetch subscription status',
+      message: error.message
+    });
+  }
+});
+
+// ============================================
+// PROTECTED ENDPOINTS (Require API Key)
+// ============================================
+
+/**
+ * POST /recipes/search
+ * Advanced recipe search with filters
+ * Requires API key
+ * Body params:
+ *   - mealTypes: array of meal types to search
+ *   - maxCalories: maximum calories
+ *   - minCalories: minimum calories
+ *   - allergies: array of allergens to exclude
+ *   - limit: number of results (max 50)
+ */
+router.post('/recipes/search', validateApiKey, async (req, res) => {
+  try {
+    const { 
+      mealTypes = ['breakfast', 'lunch', 'dinner', 'snack'],
+      maxCalories,
+      minCalories,
+      allergies = [],
+      limit = 20
+    } = req.body;
+
+    const validMealTypes = ['breakfast', 'lunch', 'dinner', 'snack'];
+    const requestedTypes = mealTypes.filter(type => 
+      validMealTypes.includes(type.toLowerCase())
+    );
+
+    if (requestedTypes.length === 0) {
+      return res.status(400).json({ 
+        error: 'Invalid meal types provided' 
+      });
+    }
+
+    const searchLimit = Math.min(parseInt(limit) || 20, 50);
+    const allRecipes = [];
+
+    // Fetch from each requested meal type collection
+    for (const mealType of requestedTypes) {
+      const collectionName = `${mealType.toLowerCase()}_list_full_may2025`;
+      const snapshot = await db.collection(collectionName)
+        .limit(searchLimit)
+        .get();
+
+      snapshot.docs.forEach(doc => {
+        const data = doc.data();
+        const calories = parseFloat(data.Calories) || 0;
+        const ingredients = (data.Ingredients || '').toLowerCase();
+
+        // Apply filters
+        let matches = true;
+
+        // Calorie filters
+        if (maxCalories && calories > maxCalories) matches = false;
+        if (minCalories && calories < minCalories) matches = false;
+
+        // Allergy filters
+        if (allergies.length > 0) {
+          const hasAllergen = allergies.some(allergen => 
+            ingredients.includes(allergen.toLowerCase())
+          );
+          if (hasAllergen) matches = false;
+        }
+
+        if (matches) {
+          allRecipes.push({
+            id: doc.id,
+            mealType,
+            ...data
+          });
+        }
+      });
+    }
+
+    res.json({
+      success: true,
+      count: allRecipes.length,
+      recipes: allRecipes.slice(0, searchLimit)
+    });
+  } catch (error) {
+    console.error('Error searching recipes:', error);
+    res.status(500).json({ 
+      error: 'Failed to search recipes', 
+      message: error.message 
+    });
+  }
+});
+
+/**
+ * GET /users/:userId/nutrition-plans
+ * Get user's CURRENT ACTIVE nutrition plan only
+ * Requires Firebase Auth
+ */
+router.get('/users/:userId/nutrition-plans', verifyFirebaseAuth, async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    // Ensure user can only access their own data
+    if (req.uid !== userId) {
+      return res.status(403).json({ 
+        error: 'Forbidden', 
+        message: 'You can only access your own nutrition plans' 
+      });
+    }
+
+    // Query for the active plan only
+    const activePlanQuery = await db.collection('users')
+      .doc(userId)
+      .collection('nutritionPlans')
+      .where('active', '==', true)
+      .orderBy('generatedAt', 'desc')
+      .limit(1)
+      .get();
+
+    if (activePlanQuery.empty) {
+      return res.status(404).json({
+        success: false,
+        message: 'No active nutrition plan found. Please generate a nutrition plan first.',
+        plan: null
+      });
+    }
+
+    const planDoc = activePlanQuery.docs[0];
+    const plan = {
+      id: planDoc.id,
+      ...planDoc.data()
+    };
+
+    res.json({
+      success: true,
+      plan: plan
+    });
+  } catch (error) {
+    console.error('Error fetching nutrition plan:', error);
+    res.status(500).json({ 
+      error: 'Failed to fetch nutrition plan', 
+      message: error.message 
+    });
+  }
+});
+
+// ============================================
+// NUTRITION PLAN GENERATION
+// ============================================
+
+// Helper functions from index.js
+function cleanObjectKeys(obj) {
+  const cleanedObj = {};
+  for (const key in obj) {
+    if (Object.prototype.hasOwnProperty.call(obj, key)) {
+      const cleanedKey = key.replace(/\[.*?\]/g, '').trim();
+      cleanedObj[cleanedKey] = obj[key];
+    }
+  }
+  return cleanedObj;
+}
+
+const parseTime = (timesString) => {
+  let preparation = 0;
+  let cooking = 0;
+
+  if (typeof timesString !== 'string' || timesString.trim() === '') {
+    return { preparation, cooking };
+  }
+
+  const lowerCaseTimesString = timesString.toLowerCase();
+  const totalMatch = lowerCaseTimesString.match(/total time:\s*(\d+)\s*mins?/);
+  if (totalMatch) {
+    const totalTime = parseInt(totalMatch[1]);
+    cooking = totalTime;
+  }
+
+  const prepMatch = lowerCaseTimesString.match(/preparation:\s*(\d+)\s*mins?/);
+  if (prepMatch) {
+    preparation = parseInt(prepMatch[1]);
+  }
+
+  const cookMatch = lowerCaseTimesString.match(/cooking:\s*(\d+)\s*mins?/);
+  if (cookMatch) {
+    cooking = parseInt(cookMatch[1]);
+  }
+
+  return { preparation, cooking };
+};
+
+async function parseRecipeFields(recipe) {
+  const cleanedRecipe = cleanObjectKeys(recipe);
+  
+  const rawCaloriesValue = cleanedRecipe.Calories;
+  let parsedCaloriesValue;
+
+  const trimmedCaloriesString = typeof rawCaloriesValue === 'string' ? rawCaloriesValue.trim() : rawCaloriesValue;
+
+  if (trimmedCaloriesString !== undefined && trimmedCaloriesString !== null && trimmedCaloriesString !== '') {
+    parsedCaloriesValue = parseFloat(trimmedCaloriesString);
+  } else {
+    parsedCaloriesValue = 0;
+  }
+
+  const parsedServings = typeof cleanedRecipe.servings === 'string' ? cleanedRecipe.servings.trim() : '';
+  const parsedTimes = typeof cleanedRecipe.Times === 'string' ? cleanedRecipe.Times.trim() : '';
+  const { preparation: derivedPreparationTime, cooking: derivedCookingTime } = parseTime(parsedTimes);
+
+  const parsedRecipe = {
+    id: cleanedRecipe.id,
+    Calories: parsedCaloriesValue,
+    Blurb: typeof cleanedRecipe.Blurb === 'string' ? cleanedRecipe.Blurb.trim() : '',
+    Carbs: parseFloat(String(cleanedRecipe.Carbs || '0').trim()) || 0,
+    Fat: parseFloat(String(cleanedRecipe.Fat || '0').trim()) || 0,
+    Fibre: parseFloat(String(cleanedRecipe.Fibre || '0').trim()) || 0,
+    ImageUrl: typeof cleanedRecipe.ImageURL === 'string' ? cleanedRecipe.ImageURL.trim() : '',
+    Ingredients: typeof cleanedRecipe.Ingredients === 'string' ? cleanedRecipe.Ingredients.trim() : '',
+    Method: typeof cleanedRecipe.Method === 'string' ? cleanedRecipe.Method.trim() : '',
+    Protein: parseFloat(String(cleanedRecipe.Protein || '0').trim()) || 0,
+    Salt: parseFloat(String(cleanedRecipe.Salt || '0').trim()) || 0,
+    Saturates: parseFloat(String(cleanedRecipe.Saturates || '0').trim()) || 0,
+    Sugars: parseFloat(String(cleanedRecipe.Sugars || '0').trim()) || 0,
+    Times: parsedTimes,
+    Title: typeof cleanedRecipe.Title === 'string' ? cleanedRecipe.Title.trim() : '',
+    Webpage: typeof cleanedRecipe.Webpage === 'string' ? cleanedRecipe.Webpage.trim() : '',
+    preparation: derivedPreparationTime,
+    cooking: derivedCookingTime,
+    perc_carbs: parseFloat(String(cleanedRecipe.perc_carbs || '0').trim()) || 0,
+    perc_fat: parseFloat(String(cleanedRecipe.perc_fat || '0').trim()) || 0,
+    perc_fibre: parseFloat(String(cleanedRecipe.perc_fibre || '0').trim()) || 0,
+    total_g: parseFloat(String(cleanedRecipe.total_g || '0').trim()) || 0,
+    servings: parsedServings
+  };
+
+  if (typeof parsedRecipe.Calories !== 'number' || isNaN(parsedRecipe.Calories)) {
+    parsedRecipe.Calories = 0;
+  }
+
+  return parsedRecipe;
+}
+
+const isValidRecipe = recipe => {
+  const prepTime = recipe.preparation;
+  const cookTime = recipe.cooking;
+  return typeof prepTime === 'number' && !isNaN(prepTime) && prepTime <= 30 &&
+         typeof cookTime === 'number' && !isNaN(cookTime) && cookTime <= 60;
+};
+
+const fetchRecipes = async collection => {
+  const snap = await db.collection(collection).get();
+  const parsedRecipesPromises = snap.docs.map(async (doc) => {
+    const rawRecipe = { id: doc.id, ...doc.data() };
+    return await parseRecipeFields(rawRecipe);
+  });
+  return Promise.all(parsedRecipesPromises);
+};
+
+const shuffleArray = arr => {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+};
+
+const filterRecipes = (recipes, allergies, dislikes) => {
+  return recipes.filter(recipe => {
+    const ing = (recipe.Ingredients || '').toLowerCase();
+    return !allergies.some(a => ing.includes(a.toLowerCase())) &&
+           !dislikes.some(d => ing.includes(d.toLowerCase()));
+  });
+};
+
+const selectBalancedMealForDay = (recipes, targetCalories, relax = false) => {
+  const tolerance = relax ? 100 : 50;
+  const min = targetCalories - tolerance;
+  const max = targetCalories + tolerance;
+
+  const mealOption = shuffleArray(recipes).find(r => {
+    const cal = r?.Calories;
+    return typeof cal === 'number' && !isNaN(cal) && cal >= min && cal <= max && isValidRecipe(r);
+  });
+
+  return mealOption || null;
+};
+
+/**
+ * POST /users/:userId/generate-nutrition-plan
+ * Generate a personalized 7-day nutrition plan
+ * Requires Firebase Auth
+ */
+router.post('/users/:userId/generate-nutrition-plan', verifyFirebaseAuth, async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    if (req.uid !== userId) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        message: 'You can only generate plans for your own account'
+      });
+    }
+
+    const userDoc = await db.collection('users').doc(userId).get();
+    if (!userDoc.exists) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const userData = userDoc.data();
+
+    // Check if user has completed registration
+    if (!userData.registrationComplete) {
+      const missingSteps = [];
+      const steps = userData.registrationSteps || {};
+      
+      if (!steps.basicInfo) missingSteps.push('Basic Information (name, email, mobile, address)');
+      if (!steps.dietInfo) missingSteps.push('Diet Information (dietary preferences, allergies, goals)');
+      if (!steps.healthInfo) missingSteps.push('Health Information (medical conditions, sleep, stress levels)');
+      if (!steps.exercisePreference) missingSteps.push('Exercise Preferences (fitness goals, workout types)');
+      if (!steps.weeklyExercise) missingSteps.push('Weekly Exercise Schedule (activity schedule for each day)');
+
+      return res.status(400).json({
+        error: 'Registration incomplete',
+        message: 'Please complete all registration steps before generating a nutrition plan',
+        missingSteps: missingSteps,
+        registrationSteps: steps
+      });
+    }
+
+    // Check for plans generated in the last 7 days (rate limiting)
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+    const recentPlansQuery = await db.collection('users')
+      .doc(userId)
+      .collection('nutritionPlans')
+      .where('generatedAt', '>=', admin.firestore.Timestamp.fromDate(sevenDaysAgo))
+      .orderBy('generatedAt', 'desc')
+      .limit(1)
+      .get();
+
+    if (!recentPlansQuery.empty) {
+      const lastPlan = recentPlansQuery.docs[0].data();
+      const lastGeneratedDate = lastPlan.generatedAt.toDate();
+      const nextAllowedDate = new Date(lastGeneratedDate);
+      nextAllowedDate.setDate(nextAllowedDate.getDate() + 7);
+
+      return res.status(429).json({
+        error: 'Rate limit exceeded',
+        message: 'You can only generate one nutrition plan every 7 days',
+        lastGeneratedAt: lastGeneratedDate.toISOString(),
+        nextAllowedAt: nextAllowedDate.toISOString(),
+        daysRemaining: Math.ceil((nextAllowedDate - new Date()) / (1000 * 60 * 60 * 24))
+      });
+    }
+    const {
+      age, gender, height, weight, weeklyActivity = {},
+      fitnessLevel = '', goal = '', foodAllergies = '', foodLikes = '', foodDislikes = '',
+      name = '', email = '',
+      proteinPercentage: userProtein, carbsPercentage: userCarbs, fatPercentage: userFat
+    } = userData;
+
+    const parsedAge = typeof age === 'string' ? parseInt(age) : age;
+    const parsedHeight = typeof height === 'string' ? parseFloat(height) : height;
+    const parsedWeight = typeof weight === 'string' ? parseFloat(weight) : weight;
+
+    if (!['male', 'female'].includes((gender || '').toLowerCase())) {
+      return res.status(400).json({ error: 'Invalid gender' });
+    }
+    if (!parsedAge || parsedAge <= 0) return res.status(400).json({ error: 'Invalid age' });
+    if (!parsedHeight || parsedHeight <= 0) return res.status(400).json({ error: 'Invalid height' });
+    if (!parsedWeight || parsedWeight <= 0) return res.status(400).json({ error: 'Invalid weight' });
+
+    // Calculate BMR
+    const bmr = (10 * parsedWeight) + (6.25 * parsedHeight) - (5 * parsedAge) + (gender.toLowerCase() === 'male' ? 5 : -161);
+
+    // Set macros
+    let proteinPercentage, carbsPercentage, fatPercentage;
+    if (userProtein != null && userCarbs != null && userFat != null) {
+      proteinPercentage = Number(userProtein);
+      carbsPercentage = Number(userCarbs);
+      fatPercentage = Number(userFat);
+    } else {
+      switch (goal.toLowerCase()) {
+        case 'lose weight': proteinPercentage = 0.4; fatPercentage = 0.25; carbsPercentage = 0.35; break;
+        case 'gain muscle': proteinPercentage = 0.3; fatPercentage = 0.25; carbsPercentage = 0.45; break;
+        default: proteinPercentage = 0.4; fatPercentage = 0.3; carbsPercentage = 0.3;
+      }
+    }
+
+    const calorieAdjustment = {
+      'lose weight': -550,
+      'gain muscle': 250,
+      'maintain': 0
+    }[goal.toLowerCase()] ?? 0;
+
+    // Calculate daily targets
+    const dailyTargetDetails = {};
+    const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+    let totalWeeklyActivityCalories = 0;
+
+    for (const day of daysOfWeek) {
+      const activity = weeklyActivity?.[day];
+      const activityCalories = typeof activity?.calories === 'number' ? activity.calories : parseInt(activity?.calories) || 0;
+      totalWeeklyActivityCalories += activityCalories;
+
+      const dailyTDEE = bmr + activityCalories;
+      const adjustedCalories = dailyTDEE + calorieAdjustment;
+      const minCalories = gender.toLowerCase() === 'male' ? 1500 : 1200;
+      const maxCalories = dailyTDEE * 2.5;
+      const finalCalories = Math.round(Math.min(maxCalories, Math.max(minCalories, adjustedCalories)));
+
+      const proteinGrams = Math.round((finalCalories * proteinPercentage) / 4);
+      const carbsGrams = Math.round((finalCalories * carbsPercentage) / 4);
+      const fatGrams = Math.round((finalCalories * fatPercentage) / 9);
+
+      let fuelingDemandCategory = 'low';
+      if (activityCalories >= 800) fuelingDemandCategory = 'high';
+      else if (activityCalories >= 400) fuelingDemandCategory = 'medium';
+
+      dailyTargetDetails[day] = {
+        calories: finalCalories,
+        proteinGrams,
+        carbsGrams,
+        fatGrams,
+        fuelingDemandCategory
+      };
+    }
+
+    // Fetch and filter recipes
+    const allergyList = foodAllergies.split(',').map(s => s.trim()).filter(Boolean);
+    const dislikeList = foodDislikes.split(',').map(s => s.trim()).filter(Boolean);
+
+    const [breakfastRaw, lunchRaw, dinnerRaw, snackRaw] = await Promise.all([
+      fetchRecipes('breakfast_list_full_may2025'),
+      fetchRecipes('lunch_list_full_may2025'),
+      fetchRecipes('dinner_list_full_may2025'),
+      fetchRecipes('snack_list_full_may2025')
+    ]);
+
+    const breakfastRecipes = filterRecipes(breakfastRaw, allergyList, dislikeList);
+    const lunchRecipes = filterRecipes(lunchRaw, allergyList, dislikeList);
+    const dinnerRecipes = filterRecipes(dinnerRaw, allergyList, dislikeList);
+    const snackRecipes = filterRecipes(snackRaw, allergyList, dislikeList);
+
+    // Generate meal plan
+    const planDays = {};
+    for (const day of daysOfWeek) {
+      const target = dailyTargetDetails[day].calories;
+
+      const breakfast = selectBalancedMealForDay(breakfastRecipes, target * 0.25, false) ||
+                        selectBalancedMealForDay(breakfastRecipes, target * 0.25, true);
+      const lunch = selectBalancedMealForDay(lunchRecipes, target * 0.3, false) ||
+                    selectBalancedMealForDay(lunchRecipes, target * 0.3, true);
+      const dinner = selectBalancedMealForDay(dinnerRecipes, target * 0.3, false) ||
+                     selectBalancedMealForDay(dinnerRecipes, target * 0.3, true);
+      const snack = selectBalancedMealForDay(snackRecipes, target * 0.15, false) ||
+                    selectBalancedMealForDay(snackRecipes, target * 0.15, true);
+
+      planDays[day] = { breakfast, lunch, dinner, snack };
+    }
+
+    // Calculate plan end date (7 days from start)
+    const planStartDate = new Date();
+    const planEndDate = new Date(planStartDate);
+    planEndDate.setDate(planEndDate.getDate() + 7);
+
+    // Deactivate all existing active plans
+    const existingActivePlansQuery = await db.collection('users')
+      .doc(userId)
+      .collection('nutritionPlans')
+      .where('active', '==', true)
+      .get();
+
+    const batch = db.batch();
+    existingActivePlansQuery.docs.forEach(doc => {
+      batch.update(doc.ref, { 
+        active: false,
+        deactivatedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+    });
+
+    await batch.commit();
+
+    const generatedPlan = {
+      active: true,
+      planStartDate: planStartDate.toISOString(),
+      planEndDate: planEndDate.toISOString(),
+      generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      notes: `Plan based on goal "${goal}"`,
+      dailyTargetDetails,
+      days: planDays,
+      inputDetails: {
+        name, email, age, gender, height, weight, goal, fitnessLevel,
+        foodAllergies, foodLikes, foodDislikes, weeklyActivity, totalWeeklyActivityCalories
+      }
+    };
+
+    // Save to Firestore
+    const planRef = await db.collection('users').doc(userId).collection('nutritionPlans').add(generatedPlan);
+
+    res.status(201).json({
+      success: true,
+      message: 'Nutrition plan generated successfully',
+      planId: planRef.id,
+      plan: {
+        ...generatedPlan,
+        generatedAt: new Date().toISOString()
+      }
+    });
+
+  } catch (error) {
+    console.error('Error generating nutrition plan:', error);
+    res.status(500).json({
+      error: 'Failed to generate nutrition plan',
+      message: error.message
+    });
+  }
+});
+
+// ============================================
+// SHOPPING LIST GENERATION
+// ============================================
+
+const fetch = require('node-fetch');
+const functions = require('firebase-functions');
+
+/**
+ * POST /users/:userId/nutrition-plans/:planId/generate-shopping-list
+ * Generate shopping list from nutrition plan using Gemini AI
+ * Requires Firebase Auth
+ */
+router.post('/users/:userId/nutrition-plans/:planId/generate-shopping-list', verifyFirebaseAuth, async (req, res) => {
+  try {
+    const { userId, planId } = req.params;
+
+    if (req.uid !== userId) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        message: 'You can only generate shopping lists for your own plans'
+      });
+    }
+
+    // Fetch nutrition plan
+    const nutritionPlanDocRef = db.collection('users').doc(userId)
+      .collection('nutritionPlans').doc(planId);
+
+    const nutritionPlanDocSnapshot = await nutritionPlanDocRef.get();
+
+    if (!nutritionPlanDocSnapshot.exists) {
+      return res.status(404).json({
+        error: 'Nutrition plan not found'
+      });
+    }
+
+    const nutritionPlanData = nutritionPlanDocSnapshot.data();
+
+    if (!nutritionPlanData || !nutritionPlanData.days || typeof nutritionPlanData.days !== 'object') {
+      return res.status(400).json({
+        error: 'Invalid nutrition plan data',
+        message: 'Nutrition plan does not contain valid days data'
+      });
+    }
+
+    const planDays = nutritionPlanData.days;
+    let allIngredientLines = [];
+    const mealTypes = ['breakfast', 'lunch', 'dinner', 'snack'];
+
+    // Extract all ingredients
+    for (const day of Object.keys(planDays)) {
+      const dayData = planDays[day];
+
+      for (const mealType of mealTypes) {
+        if (dayData[mealType] && typeof dayData[mealType] === 'object' && dayData[mealType].Ingredients) {
+          const ingredientString = dayData[mealType].Ingredients;
+          const lines = ingredientString.split('/n').map(line => line.trim()).filter(line => line.length > 0);
+          allIngredientLines = allIngredientLines.concat(lines);
+        }
+      }
+    }
+
+    if (allIngredientLines.length === 0) {
+      return res.status(400).json({
+        error: 'No ingredients found',
+        message: 'No ingredient lines found in the nutrition plan'
+      });
+    }
+
+    // Get Gemini API key
+    const geminiApiKey = process.env.GEMINI_API_KEY || functions.config().gemini?.api_key;
+    if (!geminiApiKey) {
+      return res.status(500).json({
+        error: 'Gemini API key not configured'
+      });
+    }
+
+    // Annotate ingredients using Gemini
+    const annotatedIngredients = [];
+    const batchSize = 10;
+    const annotationPromises = [];
+
+    for (let i = 0; i < allIngredientLines.length; i += batchSize) {
+      const batch = allIngredientLines.slice(i, i + batchSize);
+
+      const annotationPrompt = `
+You are an expert at extracting ingredient details from text. For EACH of the following ingredient lines, identify and extract the 'QUANTITY', 'UNIT', 'INGREDIENT', 'PREP_METHOD', 'SIZE', 'STATE', 'OTHER', and 'EQUIPMENT' entities.
+
+Return the output as a JSON ARRAY of objects. Each object in this array MUST represent one input line and MUST have:
+- 'text': (string) The ORIGINAL ingredient line that was provided.
+- 'entities': (array) An array of entity objects. Each entity object should have 'start' (number), 'end' (number), and 'label' (string).
+
+Please annotate the following lines:
+${batch.map(line => `- ${line}`).join('\n')}
+
+JSON Output:
+`;
+
+      const batchGeminiPayload = {
+        contents: [{ role: "user", parts: [{ text: annotationPrompt }] }],
+        generationConfig: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: "ARRAY",
+            items: {
+              type: "OBJECT",
+              properties: {
+                text: { "type": "STRING" },
+                entities: {
+                  type: "ARRAY",
+                  items: {
+                    type: "OBJECT",
+                    properties: {
+                      start: { "type": "NUMBER" },
+                      end: { "type": "NUMBER" },
+                      label: { "type": "STRING" }
+                    },
+                    required: ["start", "end", "label"]
+                  }
+                }
+              },
+              required: ["text", "entities"]
+            }
+          }
+        }
+      };
+
+      annotationPromises.push(
+        fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiApiKey}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(batchGeminiPayload),
+          }
+        )
+          .then(response => response.json())
+          .then(result => {
+            if (result.candidates && result.candidates.length > 0 &&
+              result.candidates[0].content && result.candidates[0].content.parts &&
+              result.candidates[0].content.parts.length > 0) {
+              const jsonString = result.candidates[0].content.parts[0].text;
+              return JSON.parse(jsonString);
+            }
+            return [];
+          })
+          .catch(error => {
+            console.error('Gemini annotation error:', error);
+            return [];
+          })
+      );
+    }
+
+    const batchedAnnotatedResults = await Promise.all(annotationPromises);
+    batchedAnnotatedResults.forEach(batchResult => {
+      annotatedIngredients.push(...batchResult);
+    });
+
+    if (annotatedIngredients.length === 0) {
+      return res.status(500).json({
+        error: 'Failed to annotate ingredients'
+      });
+    }
+
+    // Generate shopping list
+    const shoppingListPrompt = `
+You are an intelligent shopping list generator. Your task is to take a detailed JSON list of annotated ingredients (from multiple recipes) and consolidate them into a concise, actionable shopping list.
+
+Rules:
+- Group similar ingredients together
+- Sum quantities where appropriate
+- Categorize each item using EXACTLY one of these categories:
+  - 'Produce (Fruits & Vegetables)'
+  - 'Dairy & Alternatives'
+  - 'Meat & Poultry'
+  - 'Seafood'
+  - 'Pantry (Dry Goods, Canned, Jarred)'
+  - 'Baked Goods'
+  - 'Frozen'
+  - 'Spices & Condiments'
+  - 'Beverages'
+  - 'Other'
+
+Annotated Ingredients JSON:
+${JSON.stringify(annotatedIngredients, null, 2)}
+
+Shopping List JSON:
+`;
+
+    const geminiPayloadForShoppingList = {
+      contents: [{ role: "user", parts: [{ text: shoppingListPrompt }] }],
+      generationConfig: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: "ARRAY",
+          items: {
+            type: "OBJECT",
+            properties: {
+              item: { "type": "STRING" },
+              quantity: { "type": "STRING" },
+              category: { "type": "STRING" }
+            },
+            required: ["item", "category"]
+          }
+        }
+      }
+    };
+
+    const shoppingListResponse = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiApiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(geminiPayloadForShoppingList),
+      }
+    );
+
+    const result = await shoppingListResponse.json();
+    let shoppingList = [];
+
+    if (result.candidates && result.candidates.length > 0 &&
+      result.candidates[0].content && result.candidates[0].content.parts &&
+      result.candidates[0].content.parts.length > 0) {
+      const jsonString = result.candidates[0].content.parts[0].text;
+      shoppingList = JSON.parse(jsonString);
+    }
+
+    // Store in Firestore
+    const shoppingListDocRef = db.collection('users').doc(userId)
+      .collection('nutritionPlans').doc(planId)
+      .collection('shoppingLists').doc('latest');
+
+    const shoppingListDataToStore = {
+      generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      items: shoppingList
+    };
+
+    await shoppingListDocRef.set(shoppingListDataToStore);
+
+    res.status(201).json({
+      success: true,
+      message: 'Shopping list generated successfully',
+      shoppingList
+    });
+
+  } catch (error) {
+    console.error('Error generating shopping list:', error);
+    res.status(500).json({
+      error: 'Failed to generate shopping list',
+      message: error.message
+    });
+  }
+});
+
+/**
+ * GET /users/:userId/nutrition-plans/:planId/shopping-list
+ * Get existing shopping list for a nutrition plan
+ * Requires Firebase Auth
+ */
+router.get('/users/:userId/nutrition-plans/:planId/shopping-list', verifyFirebaseAuth, async (req, res) => {
+  try {
+    const { userId, planId } = req.params;
+
+    if (req.uid !== userId) {
+      return res.status(403).json({
+        error: 'Forbidden'
+      });
+    }
+
+    const shoppingListDoc = await db.collection('users').doc(userId)
+      .collection('nutritionPlans').doc(planId)
+      .collection('shoppingLists').doc('latest')
+      .get();
+
+    if (!shoppingListDoc.exists) {
+      return res.status(404).json({
+        error: 'Shopping list not found',
+        message: 'No shopping list has been generated for this nutrition plan yet'
+      });
+    }
+
+    res.json({
+      success: true,
+      shoppingList: shoppingListDoc.data()
+    });
+
+  } catch (error) {
+    console.error('Error fetching shopping list:', error);
+    res.status(500).json({
+      error: 'Failed to fetch shopping list',
+      message: error.message
+    });
+  }
+});
+
+// ============================================
+// ERROR HANDLING
+// ============================================
+
+// 404 handler for undefined routes
+router.use((req, res) => {
+  res.status(404).json({
+    error: 'Not found',
+    message: `Route ${req.method} ${req.path} not found`,
+    documentation: 'See API_DOCUMENTATION.md for available endpoints'
+  });
+});
+
+module.exports = router;

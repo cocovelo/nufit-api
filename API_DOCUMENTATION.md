@@ -105,35 +105,26 @@ Check API status.
 
 ## User Management Endpoints
 
-### 2. User Registration
+### 2. User Registration (5-Phase Progressive System)
+
+**Important:** Registration is now split into 5 phases for better user experience. Users must complete all phases before generating nutrition plans.
+
+---
+
+#### **Phase 1: Basic Information**
 
 **POST** `/v1/users/register`
 
-Register a new user account with profile data.
+Register a new user account with basic contact information.
 
 **Request Body:**
 ```json
 {
-  "email": "user@example.com",
-  "password": "securePassword123",
-  "name": "John Doe",
-  "age": 30,
-  "gender": "male",
-  "height": 180,
-  "weight": 75,
-  "fitnessLevel": "intermediate",
-  "goal": "lose weight",
-  "weeklyActivity": {
-    "Monday": { "calories": 300 },
-    "Tuesday": { "calories": 0 },
-    ...
-  },
-  "foodAllergies": "peanuts, shellfish",
-  "foodLikes": "chicken, vegetables",
-  "foodDislikes": "mushrooms",
-  "proteinPercentage": 0.4,
-  "carbsPercentage": 0.35,
-  "fatPercentage": 0.25
+  "NAME": "John Doe",
+  "EMAIL": "user@example.com",
+  "MOBILE": "+1234567890",
+  "ADDRESS": "123 Main St, City, Country",
+  "PASSKEY": "securePassword123"
 }
 ```
 
@@ -141,9 +132,257 @@ Register a new user account with profile data.
 ```json
 {
   "success": true,
-  "message": "User registered successfully",
+  "message": "User registered successfully (Phase 1/5)",
   "userId": "firebase-user-id",
-  "email": "user@example.com"
+  "nextStep": "Complete diet information at PUT /v1/users/{userId}/diet-information",
+  "registrationProgress": {
+    "basicInfo": true,
+    "dietInformation": false,
+    "healthInformation": false,
+    "exercisePreference": false,
+    "weeklyExercise": false,
+    "complete": false
+  }
+}
+```
+
+---
+
+#### **Phase 2: Diet Information**
+
+**PUT** `/v1/users/:userId/diet-information`
+
+🔒 Requires: Firebase Auth
+
+Provide diet-related information and preferences.
+
+**Request Body:**
+```json
+{
+  "PREFERENCE": "Vegetarian",
+  "ALLERGIES": "peanuts, shellfish",
+  "WINTAKE": "2.5",
+  "FPREFERENCE": "chicken, vegetables, rice",
+  "USUPPLEMENTS": "Yes",
+  "SINTAKE": "Protein powder, Vitamin D",
+  "GOAL": "lose weight",
+  "MEALSPERDAY": "3",
+  "PETIMES": "7:00 AM, 1:00 PM, 7:00 PM",
+  "SNACKHABITS": "Fruits in afternoon",
+  "FOODDISLIKES": "mushrooms, olives",
+  "WILLINGNESS": "High"
+}
+```
+
+**Field Requirements:**
+- `PREFERENCE` (optional): Dietary preference (e.g., "Vegetarian", "Vegan", "Non-Vegetarian")
+- `ALLERGIES` (optional): Food allergies or intolerances
+- `WINTAKE` (optional): Daily water intake in liters (must be positive number)
+- `FPREFERENCE` (optional): Preferred foods
+- `USUPPLEMENTS` (optional): Whether user takes supplements ("Yes" or "No")
+- `SINTAKE` (optional): Supplement details if USUPPLEMENTS is "Yes"
+- `GOAL` (required): Fitness goal (e.g., "lose weight", "gain muscle", "maintain")
+- `MEALSPERDAY` (optional): Number of meals per day (1-8)
+- `PETIMES` (optional): Preferred eating times
+- `SNACKHABITS` (optional): Snacking habits description
+- `FOODDISLIKES` (optional): Foods to avoid
+- `WILLINGNESS` (optional): Willingness to try new foods ("High", "Medium", "Low")
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Diet information updated successfully (Phase 2/5)",
+  "nextStep": "Complete health information at PUT /v1/users/{userId}/health-information",
+  "registrationProgress": {
+    "basicInfo": true,
+    "dietInfo": true,
+    "healthInfo": false,
+    "exercisePreference": false,
+    "weeklyExercise": false,
+    "complete": false
+  }
+}
+```
+
+---
+
+#### **Phase 3: Health Information**
+
+**PUT** `/v1/users/:userId/health-information`
+
+🔒 Requires: Firebase Auth
+
+Provide health and medical information.
+
+**Request Body:**
+```json
+{
+  "MCONDITIONS": "Diabetes, Hypertension",
+  "ALLERGIES": "Penicillin",
+  "SMOKINGHABIT": "No",
+  "SDURATION": "7",
+  "STRESSLEVEL": "Medium",
+  "PINJURIES": "None",
+  "MEDICATIONS": "Metformin, Lisinopril",
+  "CALCOHOL": "No",
+  "LALCOHOL": "Occasional",
+  "OTHERISSUE": "None"
+}
+```
+
+**Field Requirements:**
+- `MCONDITIONS` (optional): Existing medical conditions
+- `ALLERGIES` (optional): Medical allergies
+- `SMOKINGHABIT` (optional): Smoking status ("Yes", "No", "Former")
+- `SDURATION` (optional): Average sleep duration in hours (0-24)
+- `STRESSLEVEL` (optional): Stress level ("Low", "Medium", "High")
+- `PINJURIES` (optional): Past injuries that may affect exercise
+- `MEDICATIONS` (optional): Current medications
+- `CALCOHOL` (optional): Current alcohol consumption ("Yes" or "No")
+- `LALCOHOL` (optional): Level of alcohol consumption if CALCOHOL is "Yes"
+- `OTHERISSUE` (optional): Any other health issues or concerns
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Health information updated successfully (Phase 3/5)",
+  "nextStep": "Complete exercise preference at PUT /v1/users/{userId}/exercise-preference",
+  "registrationProgress": {
+    "basicInfo": true,
+    "dietInfo": true,
+    "healthInfo": true,
+    "exercisePreference": false,
+    "weeklyExercise": false,
+    "complete": false
+  }
+}
+```
+
+---
+
+#### **Phase 4: Exercise Preference**
+
+**PUT** `/v1/users/:userId/exercise-preference`
+
+🔒 Requires: Firebase Auth
+
+Provide exercise preferences and workout details.
+
+**Request Body:**
+```json
+{
+  "FGOAL": "Weight Loss",
+  "WFREQUENCY": "4",
+  "WPREFERREDT": "Morning",
+  "WSETTING": "Gym",
+  "WPREFERREDTY": "Cardio, Strength Training",
+  "WDURATION": "60",
+  "EACCESS": "Full gym access",
+  "WNOTIFICATION": "Yes"
+}
+```
+
+**Field Requirements:**
+- `FGOAL` (optional): Fitness goal (e.g., "Weight Loss", "Muscle Gain", "Endurance")
+- `WFREQUENCY` (optional): Workout frequency per week (number as string)
+- `WPREFERREDT` (optional): Preferred workout time ("Morning", "Afternoon", "Evening")
+- `WSETTING` (optional): Preferred workout setting ("Gym", "Home", "Outdoor")
+- `WPREFERREDTY` (optional): Preferred workout types
+- `WDURATION` (optional): Workout duration in minutes (must be positive number)
+- `EACCESS` (optional): Equipment access description
+- `WNOTIFICATION` (optional): Whether user wants workout notifications ("Yes" or "No")
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Exercise preference updated successfully (Phase 4/5)",
+  "nextStep": "Complete weekly exercise schedule at PUT /v1/users/{userId}/weekly-exercise",
+  "registrationProgress": {
+    "basicInfo": true,
+    "dietInfo": true,
+    "healthInfo": true,
+    "exercisePreference": true,
+    "weeklyExercise": false,
+    "complete": false
+  }
+}
+```
+
+---
+
+#### **Phase 5: Weekly Exercise Schedule (Final Phase)**
+
+**PUT** `/v1/users/:userId/weekly-exercise`
+
+🔒 Requires: Firebase Auth
+
+Provide weekly exercise schedule. **This completes registration.**
+
+**Request Body:**
+```json
+{
+  "weeklyActivity": {
+    "Monday": { 
+      "activityName": "Running", 
+      "duration": 45, 
+      "calories": 400 
+    },
+    "Tuesday": { 
+      "activityName": "Rest", 
+      "duration": 0, 
+      "calories": 0 
+    },
+    "Wednesday": { 
+      "activityName": "Gym", 
+      "duration": 60, 
+      "calories": 350 
+    },
+    "Thursday": { 
+      "activityName": "Rest", 
+      "duration": 0, 
+      "calories": 0 
+    },
+    "Friday": { 
+      "activityName": "Swimming", 
+      "duration": 30, 
+      "calories": 300 
+    },
+    "Saturday": { 
+      "activityName": "Cycling", 
+      "duration": 90, 
+      "calories": 500 
+    },
+    "Sunday": { 
+      "activityName": "Yoga", 
+      "duration": 45, 
+      "calories": 150 
+    }
+  }
+}
+```
+
+**Field Requirements:**
+- Must include all 7 days: Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday
+- Each day must have: `activityName`, `duration` (0-300 minutes), `calories` (0-2000)
+- For rest days: set duration to 0 and calories to 0
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Registration completed successfully! You can now generate nutrition plans.",
+  "totalWeeklyCalories": 1700,
+  "registrationProgress": {
+    "basicInfo": true,
+    "dietInfo": true,
+    "healthInfo": true,
+    "exercisePreference": true,
+    "weeklyExercise": true,
+    "complete": true
+  }
 }
 ```
 
@@ -286,9 +525,14 @@ Get user's current subscription status.
 
 🔒 Requires: Firebase Auth
 
+**⚠️ Requirements:**
+- User must complete all 5 registration phases
+- Can only generate 1 plan per 7 days (weekly updates allowed)
+- Previous plans are automatically deactivated
+
 Generate a personalized 7-day nutrition plan based on user profile.
 
-**Response:**
+**Response (Success):**
 ```json
 {
   "success": true,
@@ -322,6 +566,36 @@ Generate a personalized 7-day nutrition plan based on user profile.
 }
 ```
 
+**Response (Registration Incomplete):**
+```json
+{
+  "success": false,
+  "error": "Registration not complete",
+  "message": "Please complete all registration steps before generating a nutrition plan",
+  "missingSteps": ["healthInformation", "weeklyExercise"],
+  "registrationProgress": {
+    "basicInfo": true,
+    "dietInformation": true,
+    "healthInformation": false,
+    "exercisePreference": true,
+    "weeklyExercise": false,
+    "complete": false
+  }
+}
+```
+
+**Response (Rate Limited - 7 Days Not Passed):**
+```json
+{
+  "success": false,
+  "error": "Rate limit exceeded",
+  "message": "You can only generate one nutrition plan every 7 days",
+  "lastPlanGeneratedAt": "2025-11-20T12:00:00.000Z",
+  "nextAllowedDate": "2025-11-27T12:00:00.000Z",
+  "daysRemaining": 3
+}
+```
+
 ---
 
 ### 9. Get User's Nutrition Plans
@@ -330,22 +604,29 @@ Generate a personalized 7-day nutrition plan based on user profile.
 
 🔒 Requires: Firebase Auth
 
-Get all nutrition plans for a user.
+**Returns only the currently active nutrition plan.** Historical plans are stored but not returned to avoid confusion.
 
 **Response:**
 ```json
 {
   "success": true,
-  "count": 3,
-  "plans": [
-    {
-      "id": "plan-abc123",
-      "planStartDate": "2025-11-10T...",
-      "generatedAt": "2025-11-10T...",
-      "dailyTargetDetails": { ... },
-      "days": { ... }
-    }
-  ]
+  "plan": {
+    "id": "plan-abc123",
+    "active": true,
+    "planStartDate": "2025-11-20T12:00:00.000Z",
+    "planEndDate": "2025-11-27T12:00:00.000Z",
+    "generatedAt": "2025-11-20T12:00:00.000Z",
+    "dailyTargetDetails": { ... },
+    "days": { ... }
+  }
+}
+```
+
+**Response (No Active Plan):**
+```json
+{
+  "success": false,
+  "message": "No active nutrition plan found. Generate a new plan to get started."
 }
 ```
 

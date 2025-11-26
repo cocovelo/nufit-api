@@ -107,7 +107,11 @@ firebase emulators:start
 ### Create an API Key
 
 ```bash
+# Create a never-expiring API key (default)
 node api-key-manager.js create "Developer Name" "email@example.com"
+
+# Or create a key that expires in 2 years
+node api-key-manager.js create "Developer Name" "email@example.com" 2
 ```
 
 This will output:
@@ -117,7 +121,7 @@ This will output:
 Developer: Developer Name
 Email: email@example.com
 API Key: nf_a1b2c3d4e5f6...
-Expires: 2026-11-10T12:00:00.000Z
+Expires: Never (no expiration)
 ═══════════════════════════════════════
 ```
 
@@ -143,6 +147,12 @@ node api-key-manager.js stats nf_a1b2c3d4e5f6...
 
 ```bash
 node api-key-manager.js permissions nf_abc123... read:recipes,search:recipes,read:users
+```
+
+### Set Key to Never Expire
+
+```bash
+node api-key-manager.js set-no-expiration nf_abc123...
 ```
 
 ## Available Functions

@@ -1,55 +1,30 @@
-# Nufit API - Quick Start Guide for Developers
+# Nufit API - 5-Phase Registration Quick Reference
 
-## 📍 API Base URL (Copy This!)
+## Base URL
 ```
 https://us-central1-nufit-67bf0.cloudfunctions.net/api/v1
 ```
-**Important:** All API calls start with this URL.
 
 ---
 
-## 🎯 Quick Start - What You Need Before Starting
+## Authentication
 
-### Prerequisites (Things You Must Have)
-
-1. **Firebase Project Access**
-   - If using Nufit API: Contact owner for Firebase config
-   - If building your own: Create Firebase project at https://console.firebase.google.com
-
-2. **Firebase Configuration** (looks like this):
-   ```javascript
-   {
-     apiKey: "AIzaSyAYJq0CK3bEkCpxGsaVRDh0JIVZx6wHRiA",
-     authDomain: "nufit-67bf0.firebaseapp.com",
-     projectId: "nufit-67bf0"
-   }
-   ```
-
-3. **Development Environment**
-   - Node.js installed (for web/React Native)
-   - OR Flutter SDK (for Flutter apps)
-
-### What Are These Two Keys?
-
-Many developers get confused between **Firebase API Key** and **Auth Token**. Here's the difference:
-
-| | Firebase API Key | Auth Token |
-|---|---|---|
-| **What is it?** | Your app's Firebase project identifier | Proof that a user is logged in |
-| **Where from?** | Firebase Console (Project Settings) | Firebase Auth after user login |
-| **Looks like** | `AIzaSyAYJq0CK3bEkCpxGsaVRDh0JIVZx6wHRiA` | `eyJhbGciOiJSUzI1NiIsImtpZCI6...` (very long) |
-| **Used where?** | Firebase SDK initialization in your app | API request headers |
-| **Secret?** | ❌ No - safe to include in app code | ✅ Yes - never share, each user different |
-| **Valid for?** | Forever (until regenerated) | 1 hour |
-| **Used how?** | `initializeApp({ apiKey: "..." })` | `headers: { Authorization: "Bearer ..." }` |
-
-**Important:** You need BOTH:
-- Firebase API Key → to initialize Firebase in your app
-- Auth Token → to make API calls after user logs in
+🔒 = Requires Firebase Auth token:
+```
+Authorization: Bearer <firebase-id-token>
+```
 
 ---
 
-## 🚀 How to Use This API - Simple Steps
+## 5-Phase Progressive Registration
+
+Complete all phases before generating nutrition plans. Each endpoint returns `registrationProgress` object.
+
+---
+
+### Phase 1: Basic Information
+
+**POST** `/users/register`
 
 ### Step 1: Understand What You Can Do
 
