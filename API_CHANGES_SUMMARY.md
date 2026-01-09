@@ -1,8 +1,32 @@
 # Nufit API - Recent Changes Summary
 
-**Last Updated:** November 26, 2025
+**Last Updated:** January 9, 2026
 
 This document summarizes the major API changes implemented in the latest update.
+
+---
+
+## ⚠️ ROLLBACK - January 9, 2026
+
+### Changes Reverted
+Rolled back registration endpoint and Firestore security rules changes that were implemented to fix the 500→409 error pattern. These changes broke API functionality and have been reverted to restore original working state.
+
+**Files Affected:**
+- `functions/api-routes.js` - Registration endpoint reverted to simpler version
+- `firestore.rules` - Reverted to require authentication for user creation
+
+**What Was Removed:**
+- Transaction safety with automatic rollback in registration endpoint
+- Pre-check for existing email in Firestore before Auth creation
+- `allow create: if true` rule for Cloud Functions (reverted to `allow create: if request.auth != null`)
+
+**Current State:**
+- API restored to original working configuration
+- Registration follows original flow: create Auth user → create Firestore document
+- Standard error handling for duplicate emails via Firebase Auth
+
+**Reason for Rollback:**
+Developer reported that all API calls stopped working after the changes were deployed. User requested immediate rollback to restore functionality.
 
 ---
 

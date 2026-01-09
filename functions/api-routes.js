@@ -368,7 +368,7 @@ router.post('/users/register', async (req, res) => {
     if (error.code === 'auth/email-already-exists') {
       return res.status(409).json({
         error: 'Email already exists',
-        message: 'A user with this email already exists'
+        message: 'A user with this email already exists. Please try logging in instead.'
       });
     }
     
@@ -388,7 +388,8 @@ router.post('/users/register', async (req, res) => {
     
     res.status(500).json({
       error: 'Registration failed',
-      message: error.message
+      message: 'An unexpected error occurred during registration',
+      details: error.message
     });
   }
 });
