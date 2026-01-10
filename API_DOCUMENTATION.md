@@ -120,11 +120,11 @@ Register a new user account with basic contact information.
 **Request Body:**
 ```json
 {
-  "NAME": "John Doe",
-  "EMAIL": "user@example.com",
-  "MOBILE": "+1234567890",
-  "ADDRESS": "123 Main St, City, Country",
-  "PASSKEY": "securePassword123"
+  "name": "John Doe",
+  "email": "user@example.com",
+  "mobile": "+1234567890",
+  "address": "123 Main St, City, Country",
+  "password": "securePassword123"
 }
 ```
 
@@ -159,34 +159,34 @@ Provide diet-related information and preferences.
 **Request Body:**
 ```json
 {
-  "PREFERENCE": "Vegetarian",
-  "ALLERGIES": "peanuts, shellfish",
-  "WINTAKE": "2.5",
-  "FPREFERENCE": "chicken, vegetables, rice",
-  "USUPPLEMENTS": "Yes",
-  "SINTAKE": "Protein powder, Vitamin D",
-  "GOAL": "lose weight",
-  "MEALSPERDAY": "3",
-  "PETIMES": "7:00 AM, 1:00 PM, 7:00 PM",
-  "SNACKHABITS": "Fruits in afternoon",
-  "FOODDISLIKES": "mushrooms, olives",
-  "WILLINGNESS": "High"
+  "preference": "Vegetarian",
+  "allergies": "peanuts, shellfish",
+  "waterIntake": "2.5",
+  "foodPreference": "chicken, vegetables, rice",
+  "useSupplements": "Yes",
+  "supplementIntake": "Protein powder, Vitamin D",
+  "goal": "lose weight",
+  "mealsPerDay": "3",
+  "preferredEatingTimes": "7:00 AM, 1:00 PM, 7:00 PM",
+  "snackHabits": "Fruits in afternoon",
+  "foodDislikes": "mushrooms, olives",
+  "willingness": "High"
 }
 ```
 
 **Field Requirements:**
-- `PREFERENCE` (optional): Dietary preference (e.g., "Vegetarian", "Vegan", "Non-Vegetarian")
-- `ALLERGIES` (optional): Food allergies or intolerances
-- `WINTAKE` (optional): Daily water intake in liters (must be positive number)
-- `FPREFERENCE` (optional): Preferred foods
-- `USUPPLEMENTS` (optional): Whether user takes supplements ("Yes" or "No")
-- `SINTAKE` (optional): Supplement details if USUPPLEMENTS is "Yes"
-- `GOAL` (required): Fitness goal (e.g., "lose weight", "gain muscle", "maintain")
-- `MEALSPERDAY` (optional): Number of meals per day (1-8)
-- `PETIMES` (optional): Preferred eating times
-- `SNACKHABITS` (optional): Snacking habits description
-- `FOODDISLIKES` (optional): Foods to avoid
-- `WILLINGNESS` (optional): Willingness to try new foods ("High", "Medium", "Low")
+- `preference` (optional): Dietary preference (e.g., "Vegetarian", "Vegan", "Non-Vegetarian")
+- `allergies` (optional): Food allergies or intolerances
+- `waterIntake` (optional): Daily water intake in liters (must be positive number)
+- `foodPreference` (optional): Preferred foods
+- `useSupplements` (optional): Whether user takes supplements ("Yes" or "No")
+- `supplementIntake` (optional): Supplement details if useSupplements is "Yes"
+- `goal` (required): Fitness goal (e.g., "lose weight", "gain muscle", "maintain")
+- `mealsPerDay` (optional): Number of meals per day (1-8)
+- `preferredEatingTimes` (optional): Preferred eating times
+- `snackHabits` (optional): Snacking habits description
+- `foodDislikes` (optional): Foods to avoid
+- `willingness` (optional): Willingness to try new foods ("High", "Medium", "Low")
 
 **Response:**
 ```json
@@ -218,30 +218,30 @@ Provide health and medical information.
 **Request Body:**
 ```json
 {
-  "MCONDITIONS": "Diabetes, Hypertension",
-  "ALLERGIES": "Penicillin",
-  "SMOKINGHABIT": "No",
-  "SDURATION": "7",
-  "STRESSLEVEL": "Medium",
-  "PINJURIES": "None",
-  "MEDICATIONS": "Metformin, Lisinopril",
-  "CALCOHOL": "No",
-  "LALCOHOL": "Occasional",
-  "OTHERISSUE": "None"
+  "medicalConditions": "Diabetes, Hypertension",
+  "allergies": "Penicillin",
+  "smokingHabit": "No",
+  "sleepDuration": "7",
+  "stressLevel": "Medium",
+  "pastInjuries": "None",
+  "medications": "Metformin, Lisinopril",
+  "currentAlcohol": "No",
+  "lastAlcohol": "Occasional",
+  "otherIssues": "None"
 }
 ```
 
 **Field Requirements:**
-- `MCONDITIONS` (optional): Existing medical conditions
-- `ALLERGIES` (optional): Medical allergies
-- `SMOKINGHABIT` (optional): Smoking status ("Yes", "No", "Former")
-- `SDURATION` (optional): Average sleep duration in hours (0-24)
-- `STRESSLEVEL` (optional): Stress level ("Low", "Medium", "High")
-- `PINJURIES` (optional): Past injuries that may affect exercise
-- `MEDICATIONS` (optional): Current medications
-- `CALCOHOL` (optional): Current alcohol consumption ("Yes" or "No")
-- `LALCOHOL` (optional): Level of alcohol consumption if CALCOHOL is "Yes"
-- `OTHERISSUE` (optional): Any other health issues or concerns
+- `medicalConditions` (optional): Existing medical conditions
+- `allergies` (optional): Medical allergies
+- `smokingHabit` (optional): Smoking status ("Yes", "No", "Former")
+- `sleepDuration` (optional): Average sleep duration in hours (0-24)
+- `stressLevel` (optional): Stress level ("Low", "Medium", "High")
+- `pastInjuries` (optional): Past injuries that may affect exercise
+- `medications` (optional): Current medications
+- `currentAlcohol` (optional): Current alcohol consumption ("Yes" or "No")
+- `lastAlcohol` (optional): Level of alcohol consumption if currentAlcohol is "Yes"
+- `otherIssues` (optional): Any other health issues or concerns
 
 **Response:**
 ```json
@@ -273,26 +273,26 @@ Provide exercise preferences and workout details.
 **Request Body:**
 ```json
 {
-  "FGOAL": "Weight Loss",
-  "WFREQUENCY": "4",
-  "WPREFERREDT": "Morning",
-  "WSETTING": "Gym",
-  "WPREFERREDTY": "Cardio, Strength Training",
-  "WDURATION": "60",
-  "EACCESS": "Full gym access",
-  "WNOTIFICATION": "Yes"
+  "fitnessGoal": "Weight Loss",
+  "workoutFrequency": "4",
+  "workoutPreferredTime": "Morning",
+  "workoutSetting": "Gym",
+  "workoutPreferredType": "Cardio, Strength Training",
+  "workoutDuration": "60",
+  "equipmentAccess": "Full gym access",
+  "workoutNotification": "Yes"
 }
 ```
 
 **Field Requirements:**
-- `FGOAL` (optional): Fitness goal (e.g., "Weight Loss", "Muscle Gain", "Endurance")
-- `WFREQUENCY` (optional): Workout frequency per week (number as string)
-- `WPREFERREDT` (optional): Preferred workout time ("Morning", "Afternoon", "Evening")
-- `WSETTING` (optional): Preferred workout setting ("Gym", "Home", "Outdoor")
-- `WPREFERREDTY` (optional): Preferred workout types
-- `WDURATION` (optional): Workout duration in minutes (must be positive number)
-- `EACCESS` (optional): Equipment access description
-- `WNOTIFICATION` (optional): Whether user wants workout notifications ("Yes" or "No")
+- `fitnessGoal` (optional): Fitness goal (e.g., "Weight Loss", "Muscle Gain", "Endurance")
+- `workoutFrequency` (optional): Workout frequency per week (number as string)
+- `workoutPreferredTime` (optional): Preferred workout time ("Morning", "Afternoon", "Evening")
+- `workoutSetting` (optional): Preferred workout setting ("Gym", "Home", "Outdoor")
+- `workoutPreferredType` (optional): Preferred workout types
+- `workoutDuration` (optional): Workout duration in minutes (must be positive number)
+- `equipmentAccess` (optional): Equipment access description
+- `workoutNotification` (optional): Whether user wants workout notifications ("Yes" or "No")
 
 **Response:**
 ```json

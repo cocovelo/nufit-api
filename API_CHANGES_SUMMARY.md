@@ -1,8 +1,73 @@
 # Nufit API - Recent Changes Summary
 
-**Last Updated:** January 9, 2026
+**Last Updated:** January 10, 2026
 
 This document summarizes the major API changes implemented in the latest update.
+
+---
+
+## 🔤 FIELD NAMES UPDATE - January 10, 2026
+
+### All API Endpoints Now Use Lowercase/CamelCase Field Names
+
+Changed all registration and user management endpoints to accept **lowercase and camelCase** field names instead of UPPERCASE, improving consistency with standard JavaScript/JSON conventions.
+
+**Files Updated:**
+- `functions/api-routes.js` - All registration phases updated
+- `API_DOCUMENTATION.md` - Complete field name reference updated  
+- `API_QUICK_REFERENCE.md` - Quick reference updated
+- `test-api-quick.ps1` - Test script updated
+
+**Phase 1 Changes (Registration):**
+```javascript
+// OLD (UPPERCASE)
+{ NAME, EMAIL, MOBILE, ADDRESS, PASSKEY }
+
+// NEW (lowercase)
+{ name, email, mobile, address, password }
+```
+
+**Phase 2 Changes (Diet Information):**
+```javascript
+// OLD
+{ PREFERENCE, ALLERGIES, WINTAKE, FPREFERENCE, USUPPLEMENTS, SINTAKE, 
+  GOAL, MEALSPERDAY, PETIMES, SNACKHABITS, FOODDISLIKES, WILLINGNESS }
+
+// NEW (camelCase)
+{ preference, allergies, waterIntake, foodPreference, useSupplements, 
+  supplementIntake, goal, mealsPerDay, preferredEatingTimes, snackHabits, 
+  foodDislikes, willingness }
+```
+
+**Phase 3 Changes (Health Information):**
+```javascript
+// OLD
+{ MCONDITIONS, ALLERGIES, SMOKINGHABIT, SDURATION, STRESSLEVEL, 
+  PINJURIES, MEDICATIONS, CALCOHOL, LALCOHOL, OTHERISSUE }
+
+// NEW (camelCase)
+{ medicalConditions, allergies, smokingHabit, sleepDuration, stressLevel, 
+  pastInjuries, medications, currentAlcohol, lastAlcohol, otherIssues }
+```
+
+**Phase 4 Changes (Exercise Preference):**
+```javascript
+// OLD
+{ FGOAL, WFREQUENCY, WPREFERREDT, WSETTING, WPREFERREDTY, 
+  WDURATION, EACCESS, WNOTIFICATION }
+
+// NEW (camelCase)
+{ fitnessGoal, workoutFrequency, workoutPreferredTime, workoutSetting, 
+  workoutPreferredType, workoutDuration, equipmentAccess, workoutNotification }
+```
+
+**Benefits:**
+- Standard JavaScript naming conventions
+- Better IDE autocomplete support
+- Improved developer experience
+- Consistent with industry best practices
+
+**Note:** Custom token generation temporarily removed during registration due to IAM permission requirements. Users must authenticate via Firebase Auth SDK after registration.
 
 ---
 

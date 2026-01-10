@@ -274,24 +274,24 @@ router.get('/recipes/:mealType/:recipeId', async (req, res) => {
 router.post('/users/register', async (req, res) => {
   try {
     const {
-      NAME,
-      EMAIL,
-      MOBILE,
-      ADDRESS,
-      PASSKEY
+      name,
+      email,
+      mobile,
+      address,
+      password
     } = req.body;
 
     // Validate required fields
-    if (!NAME || !EMAIL || !PASSKEY) {
+    if (!name || !email || !password) {
       return res.status(400).json({
         error: 'Missing required fields',
-        message: 'NAME, EMAIL, and PASSKEY are required'
+        message: 'name, email, and password are required'
       });
     }
 
     // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(EMAIL)) {
+    if (!emailRegex.test(email)) {
       return res.status(400).json({
         error: 'Invalid email format',
         message: 'Please provide a valid email address'
@@ -299,26 +299,26 @@ router.post('/users/register', async (req, res) => {
     }
 
     // Validate password length
-    if (PASSKEY.length < 6) {
+    if (password.length < 6) {
       return res.status(400).json({
         error: 'Password too short',
-        message: 'PASSKEY must be at least 6 characters'
+        message: 'password must be at least 6 characters'
       });
     }
 
     // Create Firebase Auth user
     const userRecord = await admin.auth().createUser({
-      email: EMAIL,
-      password: PASSKEY,
-      displayName: NAME
+      email: email,
+      password: password,
+      displayName: name
     });
 
     // Create basic user profile in Firestore
     const userProfile = {
-      name: NAME,
-      email: EMAIL,
-      mobile: MOBILE || '',
-      address: ADDRESS || '',
+      name: name,
+      email: email,
+      mobile: mobile || '',
+      address: address || '',
       
       // Registration status tracking
       registrationComplete: false,
@@ -342,15 +342,11 @@ router.post('/users/register', async (req, res) => {
 
     await db.collection('users').doc(userRecord.uid).set(userProfile);
 
-    // Generate custom token for immediate login
-    const customToken = await admin.auth().createCustomToken(userRecord.uid);
-
     res.status(201).json({
       success: true,
       message: 'User registered successfully (Phase 1/5)',
       userId: userRecord.uid,
       email: userRecord.email,
-      customToken: customToken,
       nextStep: 'Complete diet information at PUT /v1/users/{userId}/diet-information',
       registrationProgress: {
         basicInfo: true,
@@ -499,66 +495,66 @@ router.put('/users/:userId/diet-information', verifyFirebaseAuth, async (req, re
     }
 
     const {
-      PREFERENCE,
-      ALLERGIES,
-      WINTAKE,
-      FPREFERENCE,
-      USUPPLEMENTS,
-      SINTAKE,
-      GOAL,
-      MEALSPERDAY,
-      PETIMES,
-      SNACKHABITS,
-      FOODDISLIKES,
-      WILLINGNESS
+      preference,
+      allergies,
+      waterIntake,
+      foodPreference,
+      useSupplements,
+      supplementIntake,
+      goal,
+      mealsPerDay,
+      preferredEatingTimes,
+      snackHabits,
+      foodDislikes,
+      willingness
     } = req.body;
 
     // Validate required fields
-    if (!GOAL) {
+    if (!goal) {
       return res.status(400).json({
         error: 'Missing required field',
-        message: 'GOAL is required'
+        message: 'goal is required'
       });
     }
 
     // Validate goal value
     const validGoals = ['lose weight', 'gain muscle', 'maintain'];
-    if (!validGoals.some(g => g.toLowerCase() === GOAL.toLowerCase())) {
+    if (!validGoals.some(g => g.toLowerCase() === goal.toLowerCase())) {
       return res.status(400).json({
-        error: 'Invalid GOAL',
-        message: `GOAL must be one of: ${validGoals.join(', ')}`
+        error: 'Invalid goal',
+        message: `goal must be one of: ${validGoals.join(', ')}`
       });
     }
 
     // Validate water intake (if provided)
-    if (WINTAKE && (isNaN(parseFloat(WINTAKE)) || parseFloat(WINTAKE) < 0)) {
+    if (waterIntake && (isNaN(parseFloat(waterIntake)) || parseFloat(waterIntake) < 0)) {
       return res.status(400).json({
-        error: 'Invalid WINTAKE',
+        error: 'Invalid waterIntake',
         message: 'Water intake must be a positive number'
       });
     }
 
     // Validate meals per day (if provided)
-    if (MEALSPERDAY && (isNaN(parseInt(MEALSPERDAY)) || parseInt(MEALSPERDAY) < 1 || parseInt(MEALSPERDAY) > 8)) {
+    if (mealsPerDay && (isNaN(parseInt(mealsPerDay)) || parseInt(mealsPerDay) < 1 || parseInt(mealsPerDay) > 8)) {
       return res.status(400).json({
-        error: 'Invalid MEALSPERDAY',
+        error: 'Invalid mealsPerDay',
         message: 'Meals per day must be between 1 and 8'
       });
     }
 
     const dietInfo = {
-      PREFERENCE: PREFERENCE || '',
-      ALLERGIES: ALLERGIES || '',
-      WINTAKE: WINTAKE ? parseFloat(WINTAKE) : null,
-      FPREFERENCE: FPREFERENCE || '',
-      USUPPLEMENTS: USUPPLEMENTS || '',
-      SINTAKE: SINTAKE || '',
-      GOAL: GOAL,
-      MEALSPERDAY: MEALSPERDAY ? parseInt(MEALSPERDAY) : 3,
-      PETIMES: PETIMES || '',
-      SNACKHABITS: SNACKHABITS || '',
-      FOODDISLIKES: FOODDISLIKES || '',
-      WILLINGNESS: WILLINGNESS || '',
+      preference: preference || '',
+      allergies: allergies || '',
+      waterIntake: waterIntake ? parseFloat(waterIntake) : null,
+      foodPreference: foodPreference || '',
+      useSupplements: useSupplements || '',
+      supplementIntake: supplementIntake || '',
+      goal: goal,
+      mealsPerDay: mealsPerDay ? parseInt(mealsPerDay) : 3,
+      preferredEatingTimes: preferredEatingTimes || '',
+      snackHabits: snackHabits || '',
+      foodDislikes: foodDislikes || '',
+      willingness: willingness || '',
       'registrationSteps.dietInfo': true,
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     };
@@ -603,37 +599,37 @@ router.put('/users/:userId/health-information', verifyFirebaseAuth, async (req, 
     }
 
     const {
-      MCONDITIONS,
-      ALLERGIES,
-      SMOKINGHABIT,
-      SDURATION,
-      STRESSLEVEL,
-      PINJURIES,
-      MEDICATIONS,
-      CALCOHOL,
-      LALCOHOL,
-      OTHERISSUE
+      medicalConditions,
+      allergies,
+      smokingHabit,
+      sleepDuration,
+      stressLevel,
+      pastInjuries,
+      medications,
+      currentAlcohol,
+      lastAlcohol,
+      otherIssues
     } = req.body;
 
     // Validate sleep duration (if provided)
-    if (SDURATION && (isNaN(parseFloat(SDURATION)) || parseFloat(SDURATION) < 0 || parseFloat(SDURATION) > 24)) {
+    if (sleepDuration && (isNaN(parseFloat(sleepDuration)) || parseFloat(sleepDuration) < 0 || parseFloat(sleepDuration) > 24)) {
       return res.status(400).json({
-        error: 'Invalid SDURATION',
+        error: 'Invalid sleepDuration',
         message: 'Sleep duration must be between 0 and 24 hours'
       });
     }
 
     const healthInfo = {
-      MCONDITIONS: MCONDITIONS || '',
-      ALLERGIES: ALLERGIES || '',
-      SMOKINGHABIT: SMOKINGHABIT || '',
-      SDURATION: SDURATION ? parseFloat(SDURATION) : null,
-      STRESSLEVEL: STRESSLEVEL || '',
-      PINJURIES: PINJURIES || '',
-      MEDICATIONS: MEDICATIONS || '',
-      CALCOHOL: CALCOHOL || '',
-      LALCOHOL: LALCOHOL || '',
-      OTHERISSUE: OTHERISSUE || '',
+      medicalConditions: medicalConditions || '',
+      allergies: allergies || '',
+      smokingHabit: smokingHabit || '',
+      sleepDuration: sleepDuration ? parseFloat(sleepDuration) : null,
+      stressLevel: stressLevel || '',
+      pastInjuries: pastInjuries || '',
+      medications: medications || '',
+      currentAlcohol: currentAlcohol || '',
+      lastAlcohol: lastAlcohol || '',
+      otherIssues: otherIssues || '',
       'registrationSteps.healthInfo': true,
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     };
@@ -678,33 +674,33 @@ router.put('/users/:userId/exercise-preference', verifyFirebaseAuth, async (req,
     }
 
     const {
-      FGOAL,
-      WFREQUENCY,
-      WPREFERREDT,
-      WSETTING,
-      WPREFERREDTY,
-      WDURATION,
-      EACCESS,
-      WNOTIFICATION
+      fitnessGoal,
+      workoutFrequency,
+      workoutPreferredTime,
+      workoutSetting,
+      workoutPreferredType,
+      workoutDuration,
+      equipmentAccess,
+      workoutNotification
     } = req.body;
 
     // Validate workout duration (if provided)
-    if (WDURATION && (isNaN(parseInt(WDURATION)) || parseInt(WDURATION) < 0)) {
+    if (workoutDuration && (isNaN(parseInt(workoutDuration)) || parseInt(workoutDuration) < 0)) {
       return res.status(400).json({
-        error: 'Invalid WDURATION',
+        error: 'Invalid workoutDuration',
         message: 'Workout duration must be a positive number'
       });
     }
 
     const exercisePreference = {
-      FGOAL: FGOAL || '',
-      WFREQUENCY: WFREQUENCY || '',
-      WPREFERREDT: WPREFERREDT || '',
-      WSETTING: WSETTING || '',
-      WPREFERREDTY: WPREFERREDTY || '',
-      WDURATION: WDURATION ? parseInt(WDURATION) : null,
-      EACCESS: EACCESS || '',
-      WNOTIFICATION: WNOTIFICATION || '',
+      fitnessGoal: fitnessGoal || '',
+      workoutFrequency: workoutFrequency || '',
+      workoutPreferredTime: workoutPreferredTime || '',
+      workoutSetting: workoutSetting || '',
+      workoutPreferredType: workoutPreferredType || '',
+      workoutDuration: workoutDuration ? parseInt(workoutDuration) : null,
+      equipmentAccess: equipmentAccess || '',
+      workoutNotification: workoutNotification || '',
       'registrationSteps.exercisePreference': true,
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     };
