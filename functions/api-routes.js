@@ -270,8 +270,12 @@ router.get('/recipes/:mealType/:recipeId', async (req, res) => {
  * Creates Firebase Auth user and basic profile in Firestore
  * 
  * Phase 1 of registration - collects only essential user info
+ * 
+ * IMPORTANT: Uses lowercase field names (name, email, password, mobile, address)
  */
 router.post('/users/register', async (req, res) => {
+  let userRecord = null; // Track created user for cleanup if needed
+  
   try {
     const {
       name,
@@ -281,11 +285,32 @@ router.post('/users/register', async (req, res) => {
       password
     } = req.body;
 
-    // Validate required fields
-    if (!name || !email || !password) {
+    // Check if developer is using OLD uppercase field names and provide helpful guidance
+    if (req.body.NAME || req.body.EMAIL || req.body.PASSKEY || req.body.MOBILE || req.body.ADDRESS) {
+      return res.status(400).json({
+        error: 'Invalid field names',
+        message: 'API uses lowercase field names. Please update your request.',
+        hint: 'Use: name, email, password, mobile, address (all lowercase)',
+        receivedFields: Object.keys(req.body),
+        expectedFields: ['name', 'email', 'password', 'mobile', 'address'],
+        documentation: 'See API_DOCUMENTATION.md for complete field reference'
+      });
+    }
+
+    // Validate required fields with clear guidance
+    const missingFields = [];
+    if (!name) missingFields.push('name');
+    if (!email) missingFields.push('email');
+    if (!password) missingFields.push('password');
+    
+    if (missingFields.length > 0) {
       return res.status(400).json({
         error: 'Missing required fields',
-        message: 'name, email, and password are required'
+        message: `The following required fields are missing: ${missingFields.join(', ')}`,
+        missingFields: missingFields,
+        receivedFields: Object.keys(req.body),
+        requiredFields: ['name', 'email', 'password'],
+        optionalFields: ['mobile', 'address']
       });
     }
 
@@ -294,7 +319,9 @@ router.post('/users/register', async (req, res) => {
     if (!emailRegex.test(email)) {
       return res.status(400).json({
         error: 'Invalid email format',
-        message: 'Please provide a valid email address'
+        message: 'Please provide a valid email address',
+        example: 'user@example.com',
+        receivedValue: email
       });
     }
 
@@ -302,46 +329,125 @@ router.post('/users/register', async (req, res) => {
     if (password.length < 6) {
       return res.status(400).json({
         error: 'Password too short',
-        message: 'password must be at least 6 characters'
+        message: 'Password must be at least 6 characters',
+        requirement: 'Minimum 6 characters',
+        receivedLength: password.length
       });
     }
 
-    // Create Firebase Auth user
-    const userRecord = await admin.auth().createUser({
-      email: email,
-      password: password,
-      displayName: name
-    });
-
-    // Create basic user profile in Firestore
-    const userProfile = {
-      name: name,
-      email: email,
-      mobile: mobile || '',
-      address: address || '',
+    // Step 1: Create Firebase Auth user
+    try {
+      userRecord = await admin.auth().createUser({
+        email: email,
+        password: password,
+        displayName: name
+      });
+      console.log(`Firebase Auth user created: ${userRecord.uid}`);
+    } catch (authError) {
+      console.error('Firebase Auth creation failed:', authError);
       
-      // Registration status tracking
-      registrationComplete: false,
-      registrationSteps: {
-        basicInfo: true,
-        dietInfo: false,
-        healthInfo: false,
-        exercisePreference: false,
-        weeklyExercise: false
-      },
+      if (authError.code === 'auth/email-already-exists') {
+        return res.status(409).json({
+          error: 'Email already exists',
+          message: 'A user with this email already exists. Please try logging in instead.',
+          suggestion: 'Use the login endpoint or try a different email address',
+          email: email
+        });
+      }
       
-      // Subscription info
-      subscribed: false,
-      subscriptionPackageId: null,
-      subscriptionStatus: 'inactive',
+      if (authError.code === 'auth/invalid-email') {
+        return res.status(400).json({
+          error: 'Invalid email',
+          message: 'The email address format is not valid',
+          receivedEmail: email
+        });
+      }
+
+      if (authError.code === 'auth/weak-password') {
+        return res.status(400).json({
+          error: 'Weak password',
+          message: 'Password should be at least 6 characters',
+          requirement: 'Minimum 6 characters'
+        });
+      }
       
-      // Timestamps
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
-    };
+      // Unknown auth error
+      throw authError;
+    }
 
-    await db.collection('users').doc(userRecord.uid).set(userProfile);
+    // Step 2: Create basic user profile in Firestore
+    try {
+      const userProfile = {
+        name: name,
+        email: email,
+        mobile: mobile || '',
+        address: address || '',
+        
+        // Registration status tracking
+        registrationComplete: false,
+        registrationSteps: {
+          basicInfo: true,
+          dietInfo: false,
+          healthInfo: false,
+          exercisePreference: false,
+          weeklyExercise: false
+        },
+        
+        // Subscription info
+        subscribed: false,
+        subscriptionPackageId: null,
+        subscriptionStatus: 'inactive',
+        subscriptionTier: null,
+        
+        // Free trial tracking
+        hasUsedFreeTrial: false,
+        freeTrialStartDate: null,
+        freeTrialEndDate: null,
+        isInFreeTrial: false,
+        
+        // Subscription dates
+        subscriptionStartDate: null,
+        subscriptionEndDate: null,
+        subscriptionCancelledDate: null,
+        
+        // Discount codes
+        hasUsedDiscountCode: false,
+        discountCode: null,
+        discountCodeUsedDate: null,
+        discountPercentage: null,
+        
+        // Timestamps
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      };
 
+      await db.collection('users').doc(userRecord.uid).set(userProfile);
+      console.log(`Firestore profile created for user: ${userRecord.uid}`);
+      
+    } catch (firestoreError) {
+      console.error('Firestore profile creation failed:', firestoreError);
+      
+      // CRITICAL: Clean up the Firebase Auth user we just created
+      // This prevents orphaned users that exist in Auth but not in Firestore
+      try {
+        console.log(`Attempting to delete orphaned Firebase Auth user: ${userRecord.uid}`);
+        await admin.auth().deleteUser(userRecord.uid);
+        console.log(`Successfully deleted orphaned user: ${userRecord.uid}`);
+      } catch (cleanupError) {
+        console.error('Failed to cleanup orphaned user:', cleanupError);
+        // Log but don't throw - we still want to return the original error
+      }
+      
+      return res.status(500).json({
+        error: 'Profile creation failed',
+        message: 'Failed to create user profile in database. The partially created user has been cleaned up.',
+        suggestion: 'Please try registering again. If the problem persists, contact support.',
+        details: firestoreError.message,
+        cleanupPerformed: true
+      });
+    }
+
+    // Success! Both Auth and Firestore profile created
     res.status(201).json({
       success: true,
       message: 'User registered successfully (Phase 1/5)',
@@ -359,33 +465,25 @@ router.post('/users/register', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('User registration error:', error);
+    console.error('Unexpected registration error:', error);
     
-    if (error.code === 'auth/email-already-exists') {
-      return res.status(409).json({
-        error: 'Email already exists',
-        message: 'A user with this email already exists. Please try logging in instead.'
-      });
-    }
-    
-    if (error.code === 'auth/invalid-email') {
-      return res.status(400).json({
-        error: 'Invalid email',
-        message: 'The email address is not valid'
-      });
-    }
-
-    if (error.code === 'auth/weak-password') {
-      return res.status(400).json({
-        error: 'Weak password',
-        message: 'Password should be at least 6 characters'
-      });
+    // If we created a user but something else went wrong, try to clean up
+    if (userRecord && userRecord.uid) {
+      try {
+        console.log(`Attempting emergency cleanup of user: ${userRecord.uid}`);
+        await admin.auth().deleteUser(userRecord.uid);
+        console.log(`Emergency cleanup successful for user: ${userRecord.uid}`);
+      } catch (cleanupError) {
+        console.error('Emergency cleanup failed:', cleanupError);
+      }
     }
     
     res.status(500).json({
       error: 'Registration failed',
       message: 'An unexpected error occurred during registration',
-      details: error.message
+      suggestion: 'Please check your request format and try again. Ensure all field names are lowercase.',
+      details: error.message,
+      timestamp: new Date().toISOString()
     });
   }
 });
@@ -732,6 +830,9 @@ router.put('/users/:userId/exercise-preference', verifyFirebaseAuth, async (req,
  * Update user's weekly exercise schedule
  * Phase 5 of registration - final step, collects weekly activity
  * Requires Firebase Auth
+ * 
+ * IMPORTANT: Use lowercase field name "weeklyActivity" (not "WEEKLY_EXERCISE")
+ * Body: { "weeklyActivity": { "Monday": {...}, "Tuesday": {...}, ... } }
  */
 router.put('/users/:userId/weekly-exercise', verifyFirebaseAuth, async (req, res) => {
   try {
@@ -744,12 +845,25 @@ router.put('/users/:userId/weekly-exercise', verifyFirebaseAuth, async (req, res
       });
     }
 
-    const { weeklyActivity } = req.body;
+    // Accept both 'weeklyActivity' and 'WEEKLY_EXERCISE' for backward compatibility
+    let weeklyActivity = req.body.weeklyActivity || req.body.WEEKLY_EXERCISE;
 
     if (!weeklyActivity || typeof weeklyActivity !== 'object') {
       return res.status(400).json({
         error: 'Invalid weeklyActivity',
-        message: 'weeklyActivity must be an object with day-activity mappings'
+        message: 'weeklyActivity must be an object with day-activity mappings',
+        expectedFormat: {
+          weeklyActivity: {
+            Monday: { activityName: "Running", duration: 45, calories: 400 },
+            Tuesday: { activityName: "Rest", duration: 0, calories: 0 },
+            Wednesday: { activityName: "Gym", duration: 60, calories: 350 },
+            Thursday: { activityName: "Rest", duration: 0, calories: 0 },
+            Friday: { activityName: "Swimming", duration: 30, calories: 300 },
+            Saturday: { activityName: "Cycling", duration: 90, calories: 500 },
+            Sunday: { activityName: "Yoga", duration: 45, calories: 150 }
+          }
+        },
+        hint: 'Ensure you are using "weeklyActivity" (not "WEEKLY_EXERCISE") as the field name'
       });
     }
 
@@ -945,7 +1059,7 @@ router.post('/payments/cancel-subscription', verifyFirebaseAuth, async (req, res
 
 /**
  * GET /payments/subscription-status
- * Get user's subscription status
+ * Get user's subscription status (basic info for backward compatibility)
  * Requires Firebase Auth
  */
 router.get('/payments/subscription-status', verifyFirebaseAuth, async (req, res) => {
@@ -968,6 +1082,334 @@ router.get('/payments/subscription-status', verifyFirebaseAuth, async (req, res)
     res.status(500).json({
       error: 'Failed to fetch subscription status',
       message: error.message
+    });
+  }
+});
+
+/**
+ * GET /users/:userId/subscription
+ * Get comprehensive subscription details for a user
+ * Requires Firebase Auth
+ * 
+ * Returns all subscription information including:
+ * - Active subscription status and tier
+ * - Free trial status (current, used, dates)
+ * - Discount code information
+ * - Subscription lifecycle dates (start, end, cancelled)
+ */
+router.get('/users/:userId/subscription', verifyFirebaseAuth, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const uid = req.uid;
+
+    // Verify user can only access their own subscription or is admin
+    if (userId !== uid) {
+      return res.status(403).json({
+        error: 'Access denied',
+        message: 'You can only access your own subscription details'
+      });
+    }
+
+    const userDoc = await db.collection('users').doc(userId).get();
+
+    if (!userDoc.exists) {
+      return res.status(404).json({
+        error: 'User not found',
+        message: 'No user found with this ID'
+      });
+    }
+
+    const userData = userDoc.data();
+    const now = new Date();
+
+    // Calculate if currently in free trial
+    let isCurrentlyInFreeTrial = false;
+    if (userData.freeTrialStartDate && userData.freeTrialEndDate) {
+      const trialStart = userData.freeTrialStartDate.toDate();
+      const trialEnd = userData.freeTrialEndDate.toDate();
+      isCurrentlyInFreeTrial = now >= trialStart && now <= trialEnd;
+    }
+
+    // Build comprehensive subscription response
+    const subscriptionDetails = {
+      success: true,
+      
+      // Active subscription info
+      subscription: {
+        isActive: userData.subscribed || false,
+        status: userData.subscriptionStatus || 'inactive',
+        tier: userData.subscriptionTier || null,
+        packageId: userData.subscriptionPackageId || null,
+        stripeSubscriptionId: userData.subscriptionId || null,
+        stripeCustomerId: userData.stripeCustomerId || null
+      },
+      
+      // Free trial information
+      freeTrial: {
+        hasEverUsedTrial: userData.hasUsedFreeTrial || false,
+        isCurrentlyInTrial: isCurrentlyInFreeTrial,
+        startDate: userData.freeTrialStartDate?.toDate() || null,
+        endDate: userData.freeTrialEndDate?.toDate() || null,
+        daysRemaining: isCurrentlyInFreeTrial && userData.freeTrialEndDate 
+          ? Math.ceil((userData.freeTrialEndDate.toDate() - now) / (1000 * 60 * 60 * 24))
+          : 0
+      },
+      
+      // Discount code information
+      discountCode: {
+        hasUsedDiscount: userData.hasUsedDiscountCode || false,
+        code: userData.discountCode || null,
+        discountPercentage: userData.discountPercentage || null,
+        usedDate: userData.discountCodeUsedDate?.toDate() || null
+      },
+      
+      // Subscription lifecycle dates
+      dates: {
+        subscriptionStarted: userData.subscriptionStartDate?.toDate() || null,
+        subscriptionEnds: userData.subscriptionEndDate?.toDate() || null,
+        subscriptionCancelled: userData.subscriptionCancelledDate?.toDate() || null,
+        currentPeriodEnd: userData.currentPeriodEnd?.toDate() || null
+      },
+      
+      // Quick status flags
+      flags: {
+        hasActiveSubscription: userData.subscribed || false,
+        isInFreeTrial: isCurrentlyInFreeTrial,
+        hasValidAccess: (userData.subscribed || isCurrentlyInFreeTrial),
+        canStartFreeTrial: !(userData.hasUsedFreeTrial || false)
+      }
+    };
+
+    res.json(subscriptionDetails);
+
+  } catch (error) {
+    console.error('Error fetching subscription details:', error);
+    res.status(500).json({
+      error: 'Failed to fetch subscription details',
+      message: error.message,
+      suggestion: 'Please try again or contact support if the issue persists'
+    });
+  }
+});
+
+/**
+ * PUT /users/:userId/subscription
+ * Update user subscription details
+ * Requires Firebase Auth
+ * 
+ * Allows updating:
+ * - Subscription status and tier
+ * - Free trial activation/deactivation
+ * - Discount code application
+ * - Subscription dates
+ * 
+ * Body parameters (all optional):
+ * - subscribed: boolean
+ * - subscriptionStatus: string ('active', 'inactive', 'cancelled', 'expired')
+ * - subscriptionTier: string (e.g., 'basic', 'premium', 'enterprise')
+ * - activateFreeTrial: boolean (starts 7-day trial)
+ * - discountCode: string
+ * - discountPercentage: number
+ * - subscriptionStartDate: ISO date string
+ * - subscriptionEndDate: ISO date string
+ */
+router.put('/users/:userId/subscription', verifyFirebaseAuth, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const uid = req.uid;
+
+    // Verify user can only modify their own subscription or is admin
+    if (userId !== uid) {
+      return res.status(403).json({
+        error: 'Access denied',
+        message: 'You can only modify your own subscription'
+      });
+    }
+
+    const userDoc = await db.collection('users').doc(userId).get();
+
+    if (!userDoc.exists) {
+      return res.status(404).json({
+        error: 'User not found',
+        message: 'No user found with this ID'
+      });
+    }
+
+    const userData = userDoc.data();
+    const updateData = {
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    };
+
+    const {
+      subscribed,
+      subscriptionStatus,
+      subscriptionTier,
+      subscriptionPackageId,
+      activateFreeTrial,
+      discountCode,
+      discountPercentage,
+      subscriptionStartDate,
+      subscriptionEndDate
+    } = req.body;
+
+    // Update subscription status
+    if (subscribed !== undefined) {
+      updateData.subscribed = Boolean(subscribed);
+      
+      // If activating subscription, set start date if not already set
+      if (subscribed && !userData.subscriptionStartDate) {
+        updateData.subscriptionStartDate = admin.firestore.FieldValue.serverTimestamp();
+      }
+      
+      // If deactivating, set end date
+      if (!subscribed && userData.subscribed) {
+        updateData.subscriptionEndDate = admin.firestore.FieldValue.serverTimestamp();
+      }
+    }
+
+    if (subscriptionStatus) {
+      const validStatuses = ['active', 'inactive', 'cancelled', 'expired', 'paused'];
+      if (!validStatuses.includes(subscriptionStatus)) {
+        return res.status(400).json({
+          error: 'Invalid subscription status',
+          message: `Status must be one of: ${validStatuses.join(', ')}`,
+          receivedValue: subscriptionStatus
+        });
+      }
+      updateData.subscriptionStatus = subscriptionStatus;
+      
+      // Set cancelled date if status is cancelled
+      if (subscriptionStatus === 'cancelled') {
+        updateData.subscriptionCancelledDate = admin.firestore.FieldValue.serverTimestamp();
+      }
+    }
+
+    if (subscriptionTier) {
+      updateData.subscriptionTier = subscriptionTier;
+    }
+
+    if (subscriptionPackageId) {
+      updateData.subscriptionPackageId = subscriptionPackageId;
+    }
+
+    // Handle free trial activation
+    if (activateFreeTrial === true) {
+      if (userData.hasUsedFreeTrial) {
+        return res.status(400).json({
+          error: 'Free trial already used',
+          message: 'This user has already used their free trial period',
+          freeTrialUsedDate: userData.freeTrialStartDate?.toDate() || null
+        });
+      }
+
+      const now = admin.firestore.Timestamp.now();
+      const trialEndDate = admin.firestore.Timestamp.fromMillis(
+        now.toMillis() + (7 * 24 * 60 * 60 * 1000) // 7 days in milliseconds
+      );
+
+      updateData.hasUsedFreeTrial = true;
+      updateData.freeTrialStartDate = now;
+      updateData.freeTrialEndDate = trialEndDate;
+      updateData.isInFreeTrial = true;
+    }
+
+    // Handle discount code
+    if (discountCode) {
+      updateData.discountCode = discountCode;
+      updateData.hasUsedDiscountCode = true;
+      updateData.discountCodeUsedDate = admin.firestore.FieldValue.serverTimestamp();
+      
+      if (discountPercentage !== undefined) {
+        const discount = Number(discountPercentage);
+        if (isNaN(discount) || discount < 0 || discount > 100) {
+          return res.status(400).json({
+            error: 'Invalid discount percentage',
+            message: 'Discount must be a number between 0 and 100',
+            receivedValue: discountPercentage
+          });
+        }
+        updateData.discountPercentage = discount;
+      }
+    }
+
+    // Handle manual date updates
+    if (subscriptionStartDate) {
+      try {
+        const startDate = new Date(subscriptionStartDate);
+        if (isNaN(startDate.getTime())) {
+          throw new Error('Invalid date format');
+        }
+        updateData.subscriptionStartDate = admin.firestore.Timestamp.fromDate(startDate);
+      } catch (dateError) {
+        return res.status(400).json({
+          error: 'Invalid start date',
+          message: 'subscriptionStartDate must be a valid ISO date string',
+          example: '2026-01-10T00:00:00Z'
+        });
+      }
+    }
+
+    if (subscriptionEndDate) {
+      try {
+        const endDate = new Date(subscriptionEndDate);
+        if (isNaN(endDate.getTime())) {
+          throw new Error('Invalid date format');
+        }
+        updateData.subscriptionEndDate = admin.firestore.Timestamp.fromDate(endDate);
+      } catch (dateError) {
+        return res.status(400).json({
+          error: 'Invalid end date',
+          message: 'subscriptionEndDate must be a valid ISO date string',
+          example: '2026-01-10T00:00:00Z'
+        });
+      }
+    }
+
+    // Check if any updates were provided
+    if (Object.keys(updateData).length === 1) { // Only updatedAt
+      return res.status(400).json({
+        error: 'No update fields provided',
+        message: 'Please provide at least one field to update',
+        availableFields: [
+          'subscribed',
+          'subscriptionStatus',
+          'subscriptionTier',
+          'subscriptionPackageId',
+          'activateFreeTrial',
+          'discountCode',
+          'discountPercentage',
+          'subscriptionStartDate',
+          'subscriptionEndDate'
+        ]
+      });
+    }
+
+    // Update Firestore
+    await db.collection('users').doc(userId).update(updateData);
+
+    // Fetch updated data to return
+    const updatedDoc = await db.collection('users').doc(userId).get();
+    const updatedData = updatedDoc.data();
+
+    res.json({
+      success: true,
+      message: 'Subscription updated successfully',
+      updatedFields: Object.keys(updateData).filter(key => key !== 'updatedAt'),
+      subscription: {
+        isActive: updatedData.subscribed || false,
+        status: updatedData.subscriptionStatus || 'inactive',
+        tier: updatedData.subscriptionTier || null,
+        hasFreeTrial: updatedData.isInFreeTrial || false,
+        discountCode: updatedData.discountCode || null
+      }
+    });
+
+  } catch (error) {
+    console.error('Error updating subscription:', error);
+    res.status(500).json({
+      error: 'Failed to update subscription',
+      message: error.message,
+      suggestion: 'Please verify your request data and try again'
     });
   }
 });
@@ -1331,19 +1773,29 @@ router.post('/users/:userId/generate-nutrition-plan', verifyFirebaseAuth, async 
       proteinPercentage: userProtein, carbsPercentage: userCarbs, fatPercentage: userFat
     } = userData;
 
-    const parsedAge = typeof age === 'string' ? parseInt(age) : age;
-    const parsedHeight = typeof height === 'string' ? parseFloat(height) : height;
-    const parsedWeight = typeof weight === 'string' ? parseFloat(weight) : weight;
+    // Allow request body to override userData (for flexibility)
+    const finalAge = req.body.age || age;
+    const finalGender = req.body.gender || gender;
+    const finalHeight = req.body.height || height;
+    const finalWeight = req.body.weight || weight;
+    const finalGoal = req.body.goal || goal;
 
-    if (!['male', 'female'].includes((gender || '').toLowerCase())) {
-      return res.status(400).json({ error: 'Invalid gender' });
+    const parsedAge = typeof finalAge === 'string' ? parseInt(finalAge) : finalAge;
+    const parsedHeight = typeof finalHeight === 'string' ? parseFloat(finalHeight) : finalHeight;
+    const parsedWeight = typeof finalWeight === 'string' ? parseFloat(finalWeight) : finalWeight;
+
+    if (!['male', 'female'].includes((finalGender || '').toLowerCase())) {
+      return res.status(400).json({ 
+        error: 'Invalid gender',
+        message: 'Gender must be "male" or "female"'
+      });
     }
-    if (!parsedAge || parsedAge <= 0) return res.status(400).json({ error: 'Invalid age' });
-    if (!parsedHeight || parsedHeight <= 0) return res.status(400).json({ error: 'Invalid height' });
-    if (!parsedWeight || parsedWeight <= 0) return res.status(400).json({ error: 'Invalid weight' });
+    if (!parsedAge || parsedAge <= 0) return res.status(400).json({ error: 'Invalid age', message: 'Age must be a positive number' });
+    if (!parsedHeight || parsedHeight <= 0) return res.status(400).json({ error: 'Invalid height', message: 'Height must be a positive number' });
+    if (!parsedWeight || parsedWeight <= 0) return res.status(400).json({ error: 'Invalid weight', message: 'Weight must be a positive number' });
 
     // Calculate BMR
-    const bmr = (10 * parsedWeight) + (6.25 * parsedHeight) - (5 * parsedAge) + (gender.toLowerCase() === 'male' ? 5 : -161);
+    const bmr = (10 * parsedWeight) + (6.25 * parsedHeight) - (5 * parsedAge) + (finalGender.toLowerCase() === 'male' ? 5 : -161);
 
     // Set macros
     let proteinPercentage, carbsPercentage, fatPercentage;
@@ -1377,7 +1829,7 @@ router.post('/users/:userId/generate-nutrition-plan', verifyFirebaseAuth, async 
 
       const dailyTDEE = bmr + activityCalories;
       const adjustedCalories = dailyTDEE + calorieAdjustment;
-      const minCalories = gender.toLowerCase() === 'male' ? 1500 : 1200;
+      const minCalories = finalGender.toLowerCase() === 'male' ? 1500 : 1200;
       const maxCalories = dailyTDEE * 2.5;
       const finalCalories = Math.round(Math.min(maxCalories, Math.max(minCalories, adjustedCalories)));
 
@@ -1458,11 +1910,17 @@ router.post('/users/:userId/generate-nutrition-plan', verifyFirebaseAuth, async 
       planStartDate: planStartDate.toISOString(),
       planEndDate: planEndDate.toISOString(),
       generatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      notes: `Plan based on goal "${goal}"`,
+      notes: `Plan based on goal "${finalGoal}"`,
       dailyTargetDetails,
       days: planDays,
       inputDetails: {
-        name, email, age, gender, height, weight, goal, fitnessLevel,
+        name, email, 
+        age: parsedAge, 
+        gender: finalGender, 
+        height: parsedHeight, 
+        weight: parsedWeight, 
+        goal: finalGoal, 
+        fitnessLevel,
         foodAllergies, foodLikes, foodDislikes, weeklyActivity, totalWeeklyActivityCalories
       }
     };

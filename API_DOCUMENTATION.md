@@ -1,5 +1,19 @@
 # Nufit API Documentation
 
+## IMPORTANT: Mobile Integration Guide
+
+**Before implementing any API calls**, please read:
+- 📋 **[API_FIELD_REFERENCE.md](API_FIELD_REFERENCE.md)** - Complete field mapping for all 5 registration phases
+- This guide maps every field, shows validation rules, and explains what fields to send/receive
+
+**Key Points:**
+- ✅ All field names use **lowercase camelCase** (e.g., `weeklyActivity`, NOT `WEEKLY_EXERCISE`)
+- ✅ Follow registration phases in order (1 → 5)
+- ✅ Don't modify backend-managed fields (subscription, timestamps, etc.)
+- ✅ Phase 5 (Weekly Exercise) must complete before generating nutrition plans
+
+---
+
 ## Overview
 
 The Nufit API provides access to recipe data, nutrition planning, and user management features. The API uses a hybrid approach:
