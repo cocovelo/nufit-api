@@ -532,8 +532,14 @@ router.get('/users/:userId/profile', verifyFirebaseAuth, async (req, res) => {
 
 /**
  * PUT /users/:userId/profile
- * Update user profile data (legacy endpoint - for backward compatibility)
+ * Update user profile data - accepts any field from request
  * Requires Firebase Auth
+ * 
+ * Note: Use phase-specific endpoints for phase data:
+ * - Phase 2: PUT /diet-information
+ * - Phase 3: PUT /health-information
+ * - Phase 4: PUT /exercise-preference
+ * - Phase 5: PUT /weekly-exercise
  */
 router.put('/users/:userId/profile', verifyFirebaseAuth, async (req, res) => {
   try {
@@ -546,24 +552,73 @@ router.put('/users/:userId/profile', verifyFirebaseAuth, async (req, res) => {
       });
     }
 
-    const allowedFields = [
-      'name', 'mobile', 'address'
-    ];
+    // Get all fields from request body
+    const updateData = { ...req.body };
 
-    const updateData = {};
-    allowedFields.forEach(field => {
-      if (req.body[field] !== undefined) {
-        updateData[field] = req.body[field];
-      }
-    });
+    // Check if any fields are provided
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({
+        error: 'No fields provided',
+        message: 'Please provide at least one field to update',
+        example: {
+          name: 'John Doe',
+          mobile: '+1234567890',
+          address: '123 Main St'
+        }
+      });
+    }
+
+    // Validate specific fields if provided
+    if (updateData.gender && !['male', 'female'].includes(updateData.gender.toLowerCase())) {
+      return res.status(400).json({
+        error: 'Invalid gender',
+        message: 'Gender must be "male" or "female"'
+      });
+    }
+
+    if (updateData.sleepDuration && (isNaN(parseFloat(updateData.sleepDuration)) || parseFloat(updateData.sleepDuration) < 0 || parseFloat(updateData.sleepDuration) > 24)) {
+      return res.status(400).json({
+        error: 'Invalid sleepDuration',
+        message: 'Sleep duration must be between 0 and 24 hours'
+      });
+    }
+
+    if (updateData.waterIntake && (isNaN(parseFloat(updateData.waterIntake)) || parseFloat(updateData.waterIntake) < 0)) {
+      return res.status(400).json({
+        error: 'Invalid waterIntake',
+        message: 'Water intake must be a positive number'
+      });
+    }
+
+    if (updateData.mealsPerDay && (isNaN(parseInt(updateData.mealsPerDay)) || parseInt(updateData.mealsPerDay) < 1 || parseInt(updateData.mealsPerDay) > 8)) {
+      return res.status(400).json({
+        error: 'Invalid mealsPerDay',
+        message: 'Meals per day must be between 1 and 8'
+      });
+    }
+
+    // Remove registrationComplete flag to prevent accidental changes
+    delete updateData.registrationComplete;
+    delete updateData.registrationSteps;
 
     updateData.updatedAt = admin.firestore.FieldValue.serverTimestamp();
 
     await db.collection('users').doc(userId).update(updateData);
 
+    // Fetch updated data to confirm changes
+    const updatedDoc = await db.collection('users').doc(userId).get();
+    const updatedFields = Object.keys(updateData).filter(key => key !== 'updatedAt');
+
     res.json({
       success: true,
-      message: 'Profile updated successfully'
+      message: 'Profile updated successfully',
+      updatedFields: updatedFields,
+      updatedData: {
+        ...updatedFields.reduce((acc, field) => {
+          acc[field] = updatedDoc.data()[field];
+          return acc;
+        }, {})
+      }
     });
 
   } catch (error) {
@@ -706,8 +761,17 @@ router.put('/users/:userId/health-information', verifyFirebaseAuth, async (req, 
       medications,
       currentAlcohol,
       lastAlcohol,
-      otherIssues
+      otherIssues,
+      gender
     } = req.body;
+
+    // Validate gender (if provided)
+    if (gender && !['male', 'female'].includes(gender.toLowerCase())) {
+      return res.status(400).json({
+        error: 'Invalid gender',
+        message: 'Gender must be "male" or "female"'
+      });
+    }
 
     // Validate sleep duration (if provided)
     if (sleepDuration && (isNaN(parseFloat(sleepDuration)) || parseFloat(sleepDuration) < 0 || parseFloat(sleepDuration) > 24)) {
@@ -728,6 +792,7 @@ router.put('/users/:userId/health-information', verifyFirebaseAuth, async (req, 
       currentAlcohol: currentAlcohol || '',
       lastAlcohol: lastAlcohol || '',
       otherIssues: otherIssues || '',
+      gender: gender || '',
       'registrationSteps.healthInfo': true,
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     };
