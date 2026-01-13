@@ -382,6 +382,10 @@ router.post('/users/register', async (req, res) => {
         email: email,
         mobile: mobile || '',
         address: address || '',
+        age: req.body.age || null,
+        height: req.body.height || null,
+        weight: req.body.weight || null,
+        gender: req.body.gender || null,
         
         // Registration status tracking
         registrationComplete: false,
@@ -453,7 +457,7 @@ router.post('/users/register', async (req, res) => {
       message: 'User registered successfully (Phase 1/5)',
       userId: userRecord.uid,
       email: userRecord.email,
-      nextStep: 'Complete diet information at PUT /v1/users/{userId}/diet-information',
+      nextStep: 'Client should sign in with Firebase SDK, then complete diet information at PUT /v1/users/{userId}/diet-information',
       registrationProgress: {
         basicInfo: true,
         dietInfo: false,
@@ -489,10 +493,121 @@ router.post('/users/register', async (req, res) => {
 });
 
 /**
- * GET /users/:userId/profile
- * Get user profile data
- * Requires Firebase Auth
+ * POST /users/login
+ * Login with email and password to get Firebase ID token
+ * 
+ * Returns: { idToken, userId, email }
  */
+router.post('/users/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({
+        error: 'Missing credentials',
+        message: 'Email and password are required',
+        requiredFields: ['email', 'password']
+      });
+    }
+
+    // Get the Firestore user by email to get their UID
+    const usersRef = db.collection('users');
+    const querySnapshot = await usersRef.where('email', '==', email).limit(1).get();
+    
+    if (querySnapshot.empty) {
+      return res.status(401).json({
+        error: 'User not found',
+        message: 'No user found with this email'
+      });
+    }
+
+    // Verify credentials with Firebase Auth
+    try {
+      const userRecord = await admin.auth().getUserByEmail(email);
+      
+      // Create a custom token - this can be used by the client to authenticate
+      const customToken = await admin.auth().createCustomToken(userRecord.uid);
+      
+      return res.status(200).json({
+        success: true,
+        customToken: customToken,
+        userId: userRecord.uid,
+        email: email,
+        message: 'Use this customToken with Firebase client SDK: firebase.auth().signInWithCustomToken(customToken)'
+      });
+    } catch (authError) {
+      return res.status(401).json({
+        error: 'Authentication failed',
+        message: 'Invalid email or password'
+      });
+    }
+    
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({
+      error: 'Login failed',
+      message: 'An error occurred during login',
+      details: error.message
+    });
+  }
+});
+
+/**
+ * GET /users/exchange-token/:customToken
+ * Exchange a custom token for an ID token (for testing/API purposes)
+ * This is a special endpoint for API testing - use Firebase Client SDK in production
+ */
+router.get('/users/exchange-token/:customToken', async (req, res) => {
+  try {
+    const { customToken } = req.params;
+    
+    if (!customToken) {
+      return res.status(400).json({
+        error: 'Missing token',
+        message: 'customToken parameter is required'
+      });
+    }
+
+    // Use Firebase REST API to exchange custom token for ID token
+    const firebaseWebApiKey = process.env.FIREBASE_WEB_API_KEY || 'AIzaSyDhL-hE5UJrspDmtKD-YdGU9KSsQUz6BDw';
+    
+    const response = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${firebaseWebApiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        token: customToken, 
+        returnSecureToken: true 
+      })
+    });
+    
+    const data = await response.json();
+    
+    if (data.idToken) {
+      return res.status(200).json({
+        success: true,
+        idToken: data.idToken,
+        userId: data.localId,
+        expiresIn: data.expiresIn
+      });
+    } else {
+      return res.status(401).json({
+        error: 'Token exchange failed',
+        message: 'Could not exchange custom token for ID token',
+        details: data.error?.message
+      });
+    }
+    
+  } catch (error) {
+    console.error('Token exchange error:', error);
+    res.status(500).json({
+      error: 'Token exchange failed',
+      message: 'An error occurred during token exchange',
+      details: error.message
+    });
+  }
+});
+
+/**
 router.get('/users/:userId/profile', verifyFirebaseAuth, async (req, res) => {
   try {
     const { userId } = req.params;

@@ -1,4 +1,5 @@
 console.log('🚀 Starting Firebase Functions...');
+// Force rebuild - v2 token creation debug logging
 
 const functions = require('firebase-functions/v1');
 const admin = require('firebase-admin');
@@ -14,8 +15,33 @@ console.log('Firebase Admin SDK initialized.');
 
 const storage = admin.storage();
 const db = admin.firestore();
-const stripe = require('stripe')(functions.config().stripe.secret_key);
-console.log('Stripe SDK initialized.');
+
+// Initialize Stripe safely: prefer functions.config().stripe.secret_key, then env var fallback.
+let stripe = null;
+try {
+  // functions.config is a function; call it safely to read config values
+  let configObj = {};
+  try {
+    if (typeof functions.config === 'function') {
+      configObj = functions.config() || {};
+    }
+  } catch (cfgErr) {
+    configObj = {};
+  }
+
+  const stripeKeyFromConfig = (configObj && configObj.stripe && configObj.stripe.secret_key) ? configObj.stripe.secret_key : null;
+  const stripeKeyFromEnv = process.env.STRIPE_SECRET || process.env.STRIPE_SECRET_KEY || null;
+  const stripeSecret = stripeKeyFromConfig || stripeKeyFromEnv || null;
+
+  if (stripeSecret) {
+    stripe = require('stripe')(stripeSecret);
+    console.log('Stripe SDK initialized.');
+  } else {
+    console.warn('Stripe secret not found in functions.config or env; Stripe features disabled.');
+  }
+} catch (e) {
+  console.error('Stripe initialization failed:', e);
+}
 
 // Import API routes
 const apiRoutes = require('./api-routes');
