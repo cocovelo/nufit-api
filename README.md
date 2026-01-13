@@ -248,6 +248,14 @@ final result = await callable.call();
 print(result.data['plan']);
 ```
 
+## Documentation
+
+- **[API_DOCUMENTATION.md](API_DOCUMENTATION.md)** - Complete API endpoint reference
+- **[COMPLETE_WORKFLOW.md](COMPLETE_WORKFLOW.md)** - End-to-end workflow examples with all required fields
+- **[CHANGELOG.md](CHANGELOG.md)** - Version history and migration guides
+- **[API_FIELD_REFERENCE.md](API_FIELD_REFERENCE.md)** - Detailed field specifications for all endpoints
+- **[QUICK_REFERENCE_DEVELOPER.md](QUICK_REFERENCE_DEVELOPER.md)** - Quick lookup guide for developers
+
 ## Project Structure
 
 ```
@@ -257,6 +265,9 @@ nufit-data-collection/
 ├── api-key-manager.js       # CLI tool for API key management
 ├── package.json             # Dependencies
 ├── API_DOCUMENTATION.md     # Complete API documentation
+├── COMPLETE_WORKFLOW.md     # Full workflow examples
+├── CHANGELOG.md             # Version history and changes
+├── API_FIELD_REFERENCE.md   # Detailed field specifications
 ├── README.md               # This file
 └── main.py                 # Python script for data download
 ```
