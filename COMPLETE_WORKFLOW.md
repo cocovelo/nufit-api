@@ -26,7 +26,9 @@ const API_BASE = 'https://your-deployment/api/v1';
 
 ## Step 1: Register User (Phase 1)
 
-Register a new user with email and password.
+Register a new user with basic information.
+
+**Endpoint:** `POST /v1/users/register`
 
 ```javascript
 async function registerUser() {
@@ -34,10 +36,11 @@ async function registerUser() {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      email: 'user@example.com',
-      password: 'SecurePassword123!',
-      firstName: 'John',
-      lastName: 'Doe'
+      name: 'John Doe',              // Required: user's full name
+      email: 'user@example.com',     // Required: user's email
+      password: 'SecurePass123',     // Required: min 6 characters
+      mobile: '1234567890',          // Optional: user's phone number
+      address: '123 Main St'         // Optional: user's address
     })
   });
 
@@ -51,8 +54,8 @@ async function registerUser() {
   console.log('Registration successful:', {
     userId: data.userId,
     email: data.email,
-    registrationProgress: data.registrationProgress, // Phase 1/5
-    nextStep: data.nextStep // Complete Phase 2
+    registrationProgress: data.registrationProgress,
+    nextStep: data.nextStep
   });
 
   return data.userId;
@@ -62,11 +65,19 @@ async function registerUser() {
 **Response:**
 ```json
 {
-  "userId": "user-uuid",
+  "success": true,
+  "message": "User registered successfully (Phase 1/5)",
+  "userId": "abc123xyz",
   "email": "user@example.com",
-  "registrationProgress": "1/5",
-  "nextStep": "Complete dietary information (Phase 2)",
-  "timestamp": "2026-01-13T10:30:00Z"
+  "nextStep": "Complete diet information at PUT /v1/users/{userId}/diet-information",
+  "registrationProgress": {
+    "basicInfo": true,
+    "dietInfo": false,
+    "healthInfo": false,
+    "exercisePreference": false,
+    "weeklyExercise": false,
+    "complete": false
+  }
 }
 ```
 
@@ -99,24 +110,29 @@ const idToken = await signInUser('user@example.com', 'SecurePassword123!');
 
 Provide dietary preferences and restrictions.
 
+**Endpoint:** `PUT /v1/users/{userId}/diet-information`
+
 ```javascript
-async function submitDietInfo(idToken) {
-  const response = await fetch(`${API_BASE}/users/diet-information`, {
-    method: 'POST',
+async function submitDietInfo(userId, idToken) {
+  const response = await fetch(`${API_BASE}/users/${userId}/diet-information`, {
+    method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${idToken}`
     },
     body: JSON.stringify({
-      dietType: 'balanced',           // Options: vegan, vegetarian, keto, paleo, low-carb, balanced, high-protein
-      cuisinePreferences: [           // At least 1 required
-        'italian',
-        'asian',
-        'mediterranean'
-      ],
-      allergies: ['peanuts', 'shellfish'],
-      restrictions: ['no-added-sugar'],
-      excludedIngredients: ['coconut oil']
+      preference: 'vegetarian',                    // Required: dietary preference
+      allergies: ['peanuts', 'shellfish'],         // Required: array of allergens
+      waterIntake: 2.5,                            // Required: daily liters (0-10)
+      foodPreference: 'healthy',                   // Required: food preference type
+      useSupplements: true,                        // Required: boolean
+      supplementIntake: 'protein powder',          // Optional: what supplements
+      goal: 'lose weight',                         // Required: nutritional goal
+      mealsPerDay: 3,                              // Required: integer (1-6)
+      preferredEatingTimes: '08:00, 12:00, 18:00', // Optional: meal times
+      snackHabits: 'occasional',                   // Optional: snacking frequency
+      foodDislikes: ['spicy foods'],               // Optional: array of foods disliked
+      willingness: 'very willing'                  // Required: willingness to change
     })
   });
 
@@ -127,7 +143,7 @@ async function submitDietInfo(idToken) {
     return false;
   }
 
-  console.log('Diet information saved:', data.registrationProgress); // 2/5
+  console.log('Diet information saved:', data.registrationProgress);
   return true;
 }
 ```
@@ -135,41 +151,44 @@ async function submitDietInfo(idToken) {
 **Response:**
 ```json
 {
-  "userId": "user-uuid",
-  "registrationProgress": "2/5",
-  "nextStep": "Complete health information (Phase 3)",
-  "dietInformation": {
-    "dietType": "balanced",
-    "cuisinePreferences": ["italian", "asian", "mediterranean"],
-    "allergies": ["peanuts", "shellfish"],
-    "restrictions": ["no-added-sugar"],
-    "excludedIngredients": ["coconut oil"]
-  },
-  "timestamp": "2026-01-13T10:31:00Z"
+  "success": true,
+  "message": "Diet information updated successfully (Phase 2/5)",
+  "registrationProgress": {
+    "basicInfo": true,
+    "dietInfo": true,
+    "healthInfo": false,
+    "exercisePreference": false,
+    "weeklyExercise": false,
+    "complete": false
+  }
 }
 ```
 
 ## Step 4: Submit Health Information (Phase 3)
 
-Provide health metrics and personal information for nutrition planning.
+Provide health metrics and medical information.
+
+**Endpoint:** `PUT /v1/users/{userId}/health-information`
 
 ```javascript
-async function submitHealthInfo(idToken) {
-  const response = await fetch(`${API_BASE}/users/health-information`, {
-    method: 'POST',
+async function submitHealthInfo(userId, idToken) {
+  const response = await fetch(`${API_BASE}/users/${userId}/health-information`, {
+    method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${idToken}`
     },
     body: JSON.stringify({
-      age: 35,                                    // Required: 18-120
-      gender: 'male',                             // Required: male, female, other
-      height: 180,                                // Required: centimeters (e.g., 150-220)
-      weight: 75,                                 // Required: kilograms (e.g., 40-200)
-      fitnessLevel: 'intermediate',               // Required: sedentary, lightly-active, moderate, very-active
-      goals: ['weight-management', 'energy'],     // Required: At least 1. Options include: weight-gain, weight-loss, weight-management, muscle-gain, endurance, energy
-      healthConditions: [],                       // Optional: diabetes, hypertension, celiac, etc.
-      medications: []                             // Optional: Any relevant medications
+      medicalConditions: 'diabetes, hypertension',  // Required: existing conditions
+      allergies: ['penicillin'],                    // Optional: medical allergies
+      smokingHabit: 'non-smoker',                   // Required: non-smoker, occasional, regular
+      sleepDuration: 8,                             // Required: hours per night (0-24)
+      stressLevel: 'moderate',                      // Required: low, moderate, high
+      pastInjuries: 'knee injury in 2020',          // Optional: previous injuries
+      medications: 'metformin',                     // Optional: current medications
+      currentAlcohol: 'occasional',                 // Required: none, occasional, moderate, frequent
+      lastAlcohol: '2025-12-25',                    // Optional: ISO date (YYYY-MM-DD)
+      otherIssues: 'heartburn after meals'          // Optional: other health notes
     })
   });
 
@@ -180,7 +199,7 @@ async function submitHealthInfo(idToken) {
     return false;
   }
 
-  console.log('Health information saved:', data.registrationProgress); // 3/5
+  console.log('Health information saved:', data.registrationProgress);
   return true;
 }
 ```
@@ -188,43 +207,42 @@ async function submitHealthInfo(idToken) {
 **Response:**
 ```json
 {
-  "userId": "user-uuid",
-  "registrationProgress": "3/5",
-  "nextStep": "Complete exercise preference (Phase 4)",
-  "healthInformation": {
-    "age": 35,
-    "gender": "male",
-    "height": 180,
-    "weight": 75,
-    "fitnessLevel": "intermediate",
-    "goals": ["weight-management", "energy"],
-    "healthConditions": [],
-    "medications": []
-  },
-  "timestamp": "2026-01-13T10:32:00Z"
+  "success": true,
+  "message": "Health information updated successfully (Phase 3/5)",
+  "registrationProgress": {
+    "basicInfo": true,
+    "dietInfo": true,
+    "healthInfo": true,
+    "exercisePreference": false,
+    "weeklyExercise": false,
+    "complete": false
+  }
 }
 ```
 
 ## Step 5: Submit Exercise Preference (Phase 4)
 
-Specify preferred types of exercise.
+Specify workout preferences and settings.
+
+**Endpoint:** `PUT /v1/users/{userId}/exercise-preference`
 
 ```javascript
-async function submitExercisePreference(idToken) {
-  const response = await fetch(`${API_BASE}/users/exercise-preference`, {
-    method: 'POST',
+async function submitExercisePreference(userId, idToken) {
+  const response = await fetch(`${API_BASE}/users/${userId}/exercise-preference`, {
+    method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${idToken}`
     },
     body: JSON.stringify({
-      preferredExercises: [           // At least 1 required
-        'running',
-        'weightlifting',
-        'cycling'
-      ],
-      exerciseFrequency: 4,           // Required: times per week (1-7)
-      sessionDuration: 60             // Required: minutes (15-180)
+      fitnessGoal: 'lose weight',         // Required: lose weight, build muscle, improve fitness, maintain
+      workoutFrequency: 4,                // Required: integer 1-7 (times per week)
+      workoutPreferredTime: 'morning',    // Required: morning, afternoon, evening
+      workoutSetting: 'gym',              // Required: gym, home, park, pool
+      workoutPreferredType: 'cardio',     // Required: type of exercise preference
+      workoutDuration: 60,                // Required: integer 15-180 (minutes per session)
+      equipmentAccess: 'home gym',        // Required: available equipment
+      workoutNotification: true           // Required: send workout reminders?
     })
   });
 
@@ -235,7 +253,7 @@ async function submitExercisePreference(idToken) {
     return false;
   }
 
-  console.log('Exercise preference saved:', data.registrationProgress); // 4/5
+  console.log('Exercise preference saved:', data.registrationProgress);
   return true;
 }
 ```
@@ -243,39 +261,72 @@ async function submitExercisePreference(idToken) {
 **Response:**
 ```json
 {
-  "userId": "user-uuid",
-  "registrationProgress": "4/5",
-  "nextStep": "Complete weekly exercise schedule (Phase 5)",
-  "exercisePreference": {
-    "preferredExercises": ["running", "weightlifting", "cycling"],
-    "exerciseFrequency": 4,
-    "sessionDuration": 60
-  },
-  "timestamp": "2026-01-13T10:33:00Z"
+  "success": true,
+  "message": "Exercise preference updated successfully (Phase 4/5)",
+  "registrationProgress": {
+    "basicInfo": true,
+    "dietInfo": true,
+    "healthInfo": true,
+    "exercisePreference": true,
+    "weeklyExercise": false,
+    "complete": false
+  }
 }
 ```
 
 ## Step 6: Submit Weekly Exercise Schedule (Phase 5)
 
-Define the weekly exercise schedule to finalize registration.
+Define the weekly activity schedule to complete registration.
+
+**Endpoint:** `PUT /v1/users/{userId}/weekly-exercise`
+
+**CRITICAL:** Field name is `weeklyActivity` (NOT `schedule` or `weeklyExercise`)
 
 ```javascript
-async function submitWeeklySchedule(idToken) {
-  const response = await fetch(`${API_BASE}/users/weekly-exercise-schedule`, {
-    method: 'POST',
+async function submitWeeklySchedule(userId, idToken) {
+  const response = await fetch(`${API_BASE}/users/${userId}/weekly-exercise`, {
+    method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${idToken}`
     },
     body: JSON.stringify({
-      schedule: {
-        monday: { exercise: 'running', duration: 60 },
-        tuesday: { exercise: 'weightlifting', duration: 60 },
-        wednesday: { exercise: 'rest', duration: 0 },
-        thursday: { exercise: 'cycling', duration: 45 },
-        friday: { exercise: 'weightlifting', duration: 60 },
-        saturday: { exercise: 'running', duration: 60 },
-        sunday: { exercise: 'rest', duration: 0 }
+      weeklyActivity: {
+        Monday: {
+          activityName: 'Running',
+          duration: 45,        // Minutes (0-300)
+          calories: 400        // Estimated calories burned (0-2000)
+        },
+        Tuesday: {
+          activityName: 'Gym',
+          duration: 60,
+          calories: 350
+        },
+        Wednesday: {
+          activityName: 'Rest',
+          duration: 0,
+          calories: 0
+        },
+        Thursday: {
+          activityName: 'Cycling',
+          duration: 45,
+          calories: 300
+        },
+        Friday: {
+          activityName: 'Gym',
+          duration: 60,
+          calories: 350
+        },
+        Saturday: {
+          activityName: 'Swimming',
+          duration: 30,
+          calories: 300
+        },
+        Sunday: {
+          activityName: 'Yoga',
+          duration: 45,
+          calories: 150
+        }
       }
     })
   });
@@ -287,7 +338,7 @@ async function submitWeeklySchedule(idToken) {
     return false;
   }
 
-  console.log('Registration complete:', data.registrationProgress); // 5/5
+  console.log('Registration complete:', data);
   return true;
 }
 ```
@@ -295,19 +346,19 @@ async function submitWeeklySchedule(idToken) {
 **Response:**
 ```json
 {
-  "userId": "user-uuid",
-  "registrationProgress": "5/5",
-  "message": "User registration complete! Nutrition plan ready.",
-  "schedule": {
-    "monday": { "exercise": "running", "duration": 60 },
-    "tuesday": { "exercise": "weightlifting", "duration": 60 },
-    "wednesday": { "exercise": "rest", "duration": 0 },
-    "thursday": { "exercise": "cycling", "duration": 45 },
-    "friday": { "exercise": "weightlifting", "duration": 60 },
-    "saturday": { "exercise": "running", "duration": 60 },
-    "sunday": { "exercise": "rest", "duration": 0 }
+  "success": true,
+  "message": "Weekly exercise schedule updated successfully. Registration complete!",
+  "registrationComplete": true,
+  "totalWeeklyCalories": 2100,
+  "registrationProgress": {
+    "basicInfo": true,
+    "dietInfo": true,
+    "healthInfo": true,
+    "exercisePreference": true,
+    "weeklyExercise": true,
+    "complete": true
   },
-  "timestamp": "2026-01-13T10:34:00Z"
+  "nextStep": "You can now generate your personalized nutrition plan"
 }
 ```
 
@@ -316,8 +367,8 @@ async function submitWeeklySchedule(idToken) {
 Once registration is complete, generate a personalized nutrition plan.
 
 ```javascript
-async function generateNutritionPlan(idToken) {
-  const response = await fetch(`${API_BASE}/nutrition/generate-plan`, {
+async function generateNutritionPlan(userId, idToken) {
+  const response = await fetch(`${API_BASE}/users/${userId}/generate-nutrition-plan`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -334,45 +385,16 @@ async function generateNutritionPlan(idToken) {
   }
 
   console.log('Nutrition plan generated:', {
+    planId: data.planId,
     dailyCalories: data.dailyCalories,
-    macros: data.macros,
-    mealCount: data.meals.length
+    macros: data.macros
   });
 
   return data;
 }
 ```
 
-**Response:**
-```json
-{
-  "userId": "user-uuid",
-  "planId": "plan-uuid",
-  "createdAt": "2026-01-13T10:35:00Z",
-  "dailyCalories": 2200,
-  "macros": {
-    "protein": { "grams": 165, "percentage": 30 },
-    "carbs": { "grams": 275, "percentage": 50 },
-    "fat": { "grams": 73, "percentage": 30 }
-  },
-  "meals": [
-    {
-      "name": "Breakfast",
-      "time": "08:00",
-      "calories": 550,
-      "recipes": [
-        {
-          "recipeId": "recipe-123",
-          "name": "Mediterranean Omelette",
-          "servings": 1,
-          "calories": 400,
-          "prepTime": 15
-        }
-      ]
-    }
-  ]
-}
-```
+**Note:** The nutrition plan generation requires ALL registration phases to be complete first.
 
 ## Step 8: Search for Recipes
 
@@ -399,31 +421,7 @@ async function searchRecipes(idToken, query) {
 }
 
 // Usage
-const recipes = await searchRecipes(idToken, 'mediterranean chicken');
-```
-
-**Response:**
-```json
-{
-  "recipes": [
-    {
-      "recipeId": "recipe-456",
-      "name": "Mediterranean Chicken with Vegetables",
-      "source": "spoonacular",
-      "servings": 2,
-      "prepTime": 30,
-      "cookTime": 25,
-      "totalTime": 55,
-      "calories": 450,
-      "diets": ["mediterranean", "gluten-free"],
-      "cuisines": ["mediterranean"],
-      "ingredients": [
-        { "name": "chicken breast", "amount": 2, "unit": "lbs" },
-        { "name": "olive oil", "amount": 3, "unit": "tbsp" }
-      ]
-    }
-  ]
-}
+const recipes = await searchRecipes(idToken, 'vegetarian');
 ```
 
 ## Complete Workflow Example
@@ -441,14 +439,16 @@ async function completeRegistrationWorkflow() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        name: 'John Doe',
         email: 'user@example.com',
-        password: 'SecurePassword123!',
-        firstName: 'John',
-        lastName: 'Doe'
+        password: 'SecurePass123',
+        mobile: '1234567890',
+        address: '123 Main St'
       })
     });
     let data = await registerResp.json();
     if (!registerResp.ok) throw new Error(data.error);
+    const userId = data.userId;
     console.log('✓ Registration complete\n');
 
     // Step 2: Sign in
@@ -456,7 +456,7 @@ async function completeRegistrationWorkflow() {
     const userCredential = await signInWithEmailAndPassword(
       auth,
       'user@example.com',
-      'SecurePassword123!'
+      'SecurePass123'
     );
     const idToken = await userCredential.user.getIdToken();
     console.log('✓ Sign in successful\n');
@@ -468,14 +468,22 @@ async function completeRegistrationWorkflow() {
       'Authorization': `Bearer ${idToken}`
     };
     
-    let response = await fetch(`${API_BASE}/users/diet-information`, {
-      method: 'POST',
+    let response = await fetch(`${API_BASE}/users/${userId}/diet-information`, {
+      method: 'PUT',
       headers,
       body: JSON.stringify({
-        dietType: 'balanced',
-        cuisinePreferences: ['italian', 'asian'],
+        preference: 'vegetarian',
         allergies: ['peanuts'],
-        restrictions: []
+        waterIntake: 2.5,
+        foodPreference: 'healthy',
+        useSupplements: true,
+        supplementIntake: 'protein powder',
+        goal: 'lose weight',
+        mealsPerDay: 3,
+        preferredEatingTimes: '08:00, 12:00, 18:00',
+        snackHabits: 'occasional',
+        foodDislikes: ['spicy'],
+        willingness: 'very willing'
       })
     });
     data = await response.json();
@@ -484,16 +492,19 @@ async function completeRegistrationWorkflow() {
 
     // Step 4: Health Info
     console.log('Step 4: Submitting health information...');
-    response = await fetch(`${API_BASE}/users/health-information`, {
-      method: 'POST',
+    response = await fetch(`${API_BASE}/users/${userId}/health-information`, {
+      method: 'PUT',
       headers,
       body: JSON.stringify({
-        age: 35,
-        gender: 'male',
-        height: 180,
-        weight: 75,
-        fitnessLevel: 'intermediate',
-        goals: ['weight-management']
+        medicalConditions: 'none',
+        smokingHabit: 'non-smoker',
+        sleepDuration: 8,
+        stressLevel: 'moderate',
+        pastInjuries: 'none',
+        medications: 'none',
+        currentAlcohol: 'occasional',
+        lastAlcohol: '2025-12-25',
+        otherIssues: 'none'
       })
     });
     data = await response.json();
@@ -502,13 +513,18 @@ async function completeRegistrationWorkflow() {
 
     // Step 5: Exercise Preference
     console.log('Step 5: Submitting exercise preference...');
-    response = await fetch(`${API_BASE}/users/exercise-preference`, {
-      method: 'POST',
+    response = await fetch(`${API_BASE}/users/${userId}/exercise-preference`, {
+      method: 'PUT',
       headers,
       body: JSON.stringify({
-        preferredExercises: ['running', 'weightlifting'],
-        exerciseFrequency: 4,
-        sessionDuration: 60
+        fitnessGoal: 'lose weight',
+        workoutFrequency: 4,
+        workoutPreferredTime: 'morning',
+        workoutSetting: 'gym',
+        workoutPreferredType: 'cardio',
+        workoutDuration: 60,
+        equipmentAccess: 'home gym',
+        workoutNotification: true
       })
     });
     data = await response.json();
@@ -517,18 +533,18 @@ async function completeRegistrationWorkflow() {
 
     // Step 6: Weekly Schedule
     console.log('Step 6: Submitting weekly exercise schedule...');
-    response = await fetch(`${API_BASE}/users/weekly-exercise-schedule`, {
-      method: 'POST',
+    response = await fetch(`${API_BASE}/users/${userId}/weekly-exercise`, {
+      method: 'PUT',
       headers,
       body: JSON.stringify({
-        schedule: {
-          monday: { exercise: 'running', duration: 60 },
-          tuesday: { exercise: 'weightlifting', duration: 60 },
-          wednesday: { exercise: 'rest', duration: 0 },
-          thursday: { exercise: 'cycling', duration: 45 },
-          friday: { exercise: 'weightlifting', duration: 60 },
-          saturday: { exercise: 'running', duration: 60 },
-          sunday: { exercise: 'rest', duration: 0 }
+        weeklyActivity: {
+          Monday: { activityName: 'Running', duration: 45, calories: 400 },
+          Tuesday: { activityName: 'Gym', duration: 60, calories: 350 },
+          Wednesday: { activityName: 'Rest', duration: 0, calories: 0 },
+          Thursday: { activityName: 'Cycling', duration: 45, calories: 300 },
+          Friday: { activityName: 'Gym', duration: 60, calories: 350 },
+          Saturday: { activityName: 'Swimming', duration: 30, calories: 300 },
+          Sunday: { activityName: 'Yoga', duration: 45, calories: 150 }
         }
       })
     });
@@ -538,7 +554,7 @@ async function completeRegistrationWorkflow() {
 
     // Step 7: Generate Nutrition Plan
     console.log('Step 7: Generating nutrition plan...');
-    response = await fetch(`${API_BASE}/nutrition/generate-plan`, {
+    response = await fetch(`${API_BASE}/users/${userId}/generate-nutrition-plan`, {
       method: 'POST',
       headers,
       body: JSON.stringify({})
@@ -546,20 +562,7 @@ async function completeRegistrationWorkflow() {
     data = await response.json();
     if (!response.ok) throw new Error(data.error);
     console.log('✓ Nutrition plan generated');
-    console.log(`  - Daily calories: ${data.dailyCalories}`);
-    console.log(`  - Protein: ${data.macros.protein.grams}g`);
-    console.log(`  - Carbs: ${data.macros.carbs.grams}g`);
-    console.log(`  - Fat: ${data.macros.fat.grams}g\n`);
-
-    // Step 8: Search for recipes
-    console.log('Step 8: Searching for recipes...');
-    response = await fetch(`${API_BASE}/recipes/search?q=mediterranean&limit=5`, {
-      method: 'GET',
-      headers
-    });
-    data = await response.json();
-    if (!response.ok) throw new Error(data.error);
-    console.log(`✓ Found ${data.recipes.length} recipes\n`);
+    console.log(`  - Daily calories: ${data.dailyCalories}\n`);
 
     console.log('✅ Workflow complete!');
     return true;
@@ -574,25 +577,81 @@ async function completeRegistrationWorkflow() {
 await completeRegistrationWorkflow();
 ```
 
-## Error Handling
+## Quick Reference - Required Fields by Phase
 
-All endpoints return standard error responses:
+### Phase 1: Basic Information
+**Endpoint:** `POST /v1/users/register`
 
-```json
-{
-  "error": "description of what went wrong",
-  "code": "ERROR_CODE",
-  "details": "Additional context if available",
-  "timestamp": "2026-01-13T10:36:00Z"
-}
-```
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| name | string | ✅ | User's full name |
+| email | string | ✅ | User's email |
+| password | string | ✅ | Min 6 characters |
+| mobile | string | ❌ | Phone number |
+| address | string | ❌ | Address |
 
-Common status codes:
-- `400`: Bad Request - Invalid input
-- `401`: Unauthorized - Missing or invalid ID token
-- `403`: Forbidden - User not authorized for this action
-- `409`: Conflict - User already exists or data conflict
-- `500`: Internal Server Error - Server-side issue
+### Phase 2: Diet Information
+**Endpoint:** `PUT /v1/users/{userId}/diet-information`
+
+| Field | Type | Required | Validation |
+|-------|------|----------|-----------|
+| preference | string | ✅ | vegetarian, vegan, omnivore, pescatarian |
+| allergies | array | ✅ | Min 1 item |
+| waterIntake | number | ✅ | 0-10 liters |
+| foodPreference | string | ✅ | Type of food preference |
+| useSupplements | boolean | ✅ | true/false |
+| supplementIntake | string | ❌ | Type of supplements |
+| goal | string | ✅ | Nutritional goal |
+| mealsPerDay | integer | ✅ | 1-6 meals |
+| preferredEatingTimes | string | ❌ | "08:00, 12:00, 18:00" format |
+| snackHabits | string | ❌ | occasional, frequent, etc. |
+| foodDislikes | array | ❌ | Array of disliked foods |
+| willingness | string | ✅ | willingness to change diet |
+
+### Phase 3: Health Information
+**Endpoint:** `PUT /v1/users/{userId}/health-information`
+
+| Field | Type | Required | Validation |
+|-------|------|----------|-----------|
+| medicalConditions | string | ✅ | Existing conditions |
+| allergies | array | ❌ | Medical allergies |
+| smokingHabit | string | ✅ | non-smoker, occasional, regular |
+| sleepDuration | number | ✅ | 0-24 hours |
+| stressLevel | string | ✅ | low, moderate, high |
+| pastInjuries | string | ❌ | Previous injuries |
+| medications | string | ❌ | Current medications |
+| currentAlcohol | string | ✅ | none, occasional, moderate, frequent |
+| lastAlcohol | string | ❌ | ISO date YYYY-MM-DD |
+| otherIssues | string | ❌ | Other health notes |
+
+### Phase 4: Exercise Preference
+**Endpoint:** `PUT /v1/users/{userId}/exercise-preference`
+
+| Field | Type | Required | Validation |
+|-------|------|----------|-----------|
+| fitnessGoal | string | ✅ | lose weight, build muscle, improve fitness, maintain |
+| workoutFrequency | integer | ✅ | 1-7 times per week |
+| workoutPreferredTime | string | ✅ | morning, afternoon, evening |
+| workoutSetting | string | ✅ | gym, home, park, pool |
+| workoutPreferredType | string | ✅ | Type of exercise |
+| workoutDuration | integer | ✅ | 15-180 minutes |
+| equipmentAccess | string | ✅ | Available equipment |
+| workoutNotification | boolean | ✅ | true/false |
+
+### Phase 5: Weekly Exercise Schedule
+**Endpoint:** `PUT /v1/users/{userId}/weekly-exercise`
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| **weeklyActivity** | object | ✅ | CRITICAL: Use "weeklyActivity" not "schedule" |
+| weeklyActivity.{Day} | object | ❌ | Optional - each day can be omitted |
+| activityName | string | ✅ | Name of activity |
+| duration | integer | ✅ | 0-300 minutes |
+| calories | integer | ✅ | 0-2000 estimated |
+
+**Days:** Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday
+
+**Defaults:** Missing days default to `{ activityName: "Rest", duration: 0, calories: 0 }`
 
 ## Testing the Complete Workflow
 
