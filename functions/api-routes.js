@@ -109,6 +109,168 @@ const verifyFirebaseAuth = async (req, res, next) => {
   }
 };
 
+/**
+ * Subscription validation middleware for premium features
+ * Checks active subscription, quota, and subscription expiry
+ * Use this for endpoints that require an active subscription (e.g., generate-nutrition-plan)
+ */
+const verifyActiveSubscription = async (req, res, next) => {
+  try {
+    const userId = req.params.userId || req.uid;
+    
+    const userDoc = await db.collection('users').doc(userId).get();
+    
+    if (!userDoc.exists) {
+      return res.status(404).json({
+        error: 'User not found',
+        message: 'No user found with this ID'
+      });
+    }
+    
+    const userData = userDoc.data();
+    const now = new Date();
+    
+    // Check if user has active subscription
+    const hasActiveSubscription = userData.subscriptionStatus === 'active' && userData.subscribed === true;
+    
+    // Check if subscription has expired
+    let subscriptionExpired = false;
+    if (userData.subscriptionEndDate) {
+      const endDate = userData.subscriptionEndDate.toDate();
+      subscriptionExpired = now > endDate;
+    }
+    
+    // Check free trial status
+    let isInFreeTrial = false;
+    if (userData.freeTrialStartDate && userData.freeTrialEndDate) {
+      const trialStart = userData.freeTrialStartDate.toDate();
+      const trialEnd = userData.freeTrialEndDate.toDate();
+      isInFreeTrial = now >= trialStart && now <= trialEnd;
+    }
+    
+    // User must have either active subscription or be in free trial
+    if (!hasActiveSubscription && !isInFreeTrial) {
+      return res.status(402).json({
+        error: 'Payment Required',
+        message: 'This feature requires an active subscription',
+        subscriptionStatus: userData.subscriptionStatus || 'inactive',
+        hasUsedFreeTrial: userData.hasUsedFreeTrial || false,
+        canStartFreeTrial: !(userData.hasUsedFreeTrial || false),
+        suggestion: userData.hasUsedFreeTrial 
+          ? 'Please subscribe to continue using premium features'
+          : 'Start your free trial to access this feature'
+      });
+    }
+    
+    // Check if subscription expired (but was active)
+    if (hasActiveSubscription && subscriptionExpired) {
+      return res.status(402).json({
+        error: 'Subscription Expired',
+        message: 'Your subscription has expired',
+        subscriptionEndDate: userData.subscriptionEndDate.toDate().toISOString(),
+        suggestion: 'Please renew your subscription to continue'
+      });
+    }
+    
+    // Check plan generation quota
+    const quota = userData.planGenerationQuota || 0;
+    if (quota <= 0) {
+      return res.status(429).json({
+        error: 'Quota Exceeded',
+        message: 'You have used all your nutrition plan generations for this billing period',
+        currentQuota: quota,
+        subscriptionTier: userData.subscriptionTier || 'unknown',
+        suggestion: 'Your quota will reset on your next billing date, or upgrade to a higher tier for more plans'
+      });
+    }
+    
+    // Attach subscription data to request for use in endpoint
+    req.subscriptionData = {
+      tier: userData.subscriptionTier,
+      quota: quota,
+      isFreeTrial: isInFreeTrial
+    };
+    
+    next();
+    
+  } catch (error) {
+    console.error('Subscription verification error:', error);
+    return res.status(500).json({
+      error: 'Failed to verify subscription',
+      message: error.message
+    });
+  }
+};
+
+/**
+ * Soft subscription validation for accessing existing premium content
+ * Blocks access to saved content if subscription expired
+ * Use this for GET endpoints (e.g., retrieve nutrition plans)
+ */
+const verifySubscriptionForAccess = async (req, res, next) => {
+  try {
+    const userId = req.params.userId || req.uid;
+    
+    const userDoc = await db.collection('users').doc(userId).get();
+    
+    if (!userDoc.exists) {
+      return res.status(404).json({
+        error: 'User not found',
+        message: 'No user found with this ID'
+      });
+    }
+    
+    const userData = userDoc.data();
+    const now = new Date();
+    
+    // Check if user has active subscription
+    const hasActiveSubscription = userData.subscriptionStatus === 'active' && userData.subscribed === true;
+    
+    // Check if subscription has expired
+    let subscriptionExpired = false;
+    if (userData.subscriptionEndDate && hasActiveSubscription) {
+      const endDate = userData.subscriptionEndDate.toDate();
+      subscriptionExpired = now > endDate;
+    }
+    
+    // Check free trial status
+    let isInFreeTrial = false;
+    if (userData.freeTrialStartDate && userData.freeTrialEndDate) {
+      const trialStart = userData.freeTrialStartDate.toDate();
+      const trialEnd = userData.freeTrialEndDate.toDate();
+      isInFreeTrial = now >= trialStart && now <= trialEnd;
+    }
+    
+    // Block access if no valid subscription/trial
+    if (!hasActiveSubscription && !isInFreeTrial) {
+      return res.status(402).json({
+        error: 'Access Denied',
+        message: 'Your subscription is required to access this content',
+        subscriptionStatus: userData.subscriptionStatus || 'inactive',
+        suggestion: 'Please renew your subscription to access your saved nutrition plans'
+      });
+    }
+    
+    // Block if subscription expired
+    if (hasActiveSubscription && subscriptionExpired) {
+      return res.status(402).json({
+        error: 'Subscription Expired',
+        message: 'Your subscription has expired. Renew to access your content',
+        subscriptionEndDate: userData.subscriptionEndDate.toDate().toISOString()
+      });
+    }
+    
+    next();
+    
+  } catch (error) {
+    console.error('Access verification error:', error);
+    return res.status(500).json({
+      error: 'Failed to verify access',
+      message: error.message
+    });
+  }
+};
+
 // Apply rate limiting to all routes
 router.use(apiLimiter);
 
@@ -555,6 +717,11 @@ router.post('/users/register', async (req, res) => {
         subscriptionStartDate: null,
         subscriptionEndDate: null,
         subscriptionCancelledDate: null,
+        
+        // Plan generation quota tracking
+        planGenerationQuota: 0,
+        lastPlanGeneratedAt: null,
+        totalPlansGenerated: 0,
         
         // Discount codes
         hasUsedDiscountCode: false,
@@ -1695,6 +1862,133 @@ router.get('/users/:userId/subscription', verifyFirebaseAuth, async (req, res) =
 });
 
 /**
+ * POST /admin/plan-generation-reset
+ * Reset plan generation quotas for users based on their subscription tier
+ * Can reset for a specific user or all users
+ * Requires API Key authentication
+ * 
+ * Body parameters:
+ * - userId (optional): Specific user ID to reset. If omitted, resets all active subscriptions
+ * - tier (optional): Only reset users with this subscription tier
+ */
+router.post('/admin/plan-generation-reset', validateApiKey, async (req, res) => {
+  try {
+    const { userId, tier } = req.body;
+    
+    // Quota allocation by tier
+    const tierQuotas = {
+      'trial': 1,
+      'one-month': 4,
+      'three-month': 12
+    };
+    
+    let resetCount = 0;
+    let errors = [];
+    
+    if (userId) {
+      // Reset specific user
+      const userDoc = await db.collection('users').doc(userId).get();
+      
+      if (!userDoc.exists) {
+        return res.status(404).json({
+          error: 'User not found',
+          message: `No user found with ID: ${userId}`
+        });
+      }
+      
+      const userData = userDoc.data();
+      const userTier = userData.subscriptionTier;
+      
+      // Check if tier filter applies
+      if (tier && userTier !== tier) {
+        return res.status(400).json({
+          error: 'Tier mismatch',
+          message: `User has tier "${userTier}" but reset requested for tier "${tier}"`
+        });
+      }
+      
+      const newQuota = tierQuotas[userTier] || 0;
+      
+      await db.collection('users').doc(userId).update({
+        planGenerationQuota: newQuota,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+      
+      resetCount = 1;
+      
+      return res.json({
+        success: true,
+        message: `Quota reset for user ${userId}`,
+        userId: userId,
+        tier: userTier,
+        newQuota: newQuota,
+        resetCount: 1
+      });
+      
+    } else {
+      // Reset all users with active subscriptions (or filtered by tier)
+      let query = db.collection('users').where('subscriptionStatus', '==', 'active');
+      
+      if (tier) {
+        query = query.where('subscriptionTier', '==', tier);
+      }
+      
+      const usersSnapshot = await query.get();
+      
+      if (usersSnapshot.empty) {
+        return res.json({
+          success: true,
+          message: tier 
+            ? `No active users found with tier "${tier}"`
+            : 'No active subscriptions found',
+          resetCount: 0
+        });
+      }
+      
+      // Batch update users
+      const batch = db.batch();
+      const resetDetails = [];
+      
+      usersSnapshot.docs.forEach(doc => {
+        const userData = doc.data();
+        const userTier = userData.subscriptionTier;
+        const newQuota = tierQuotas[userTier] || 0;
+        
+        batch.update(doc.ref, {
+          planGenerationQuota: newQuota,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+        
+        resetDetails.push({
+          userId: doc.id,
+          tier: userTier,
+          newQuota: newQuota
+        });
+        
+        resetCount++;
+      });
+      
+      await batch.commit();
+      
+      return res.json({
+        success: true,
+        message: `Quota reset for ${resetCount} user(s)`,
+        resetCount: resetCount,
+        tierFilter: tier || 'all',
+        details: resetDetails
+      });
+    }
+    
+  } catch (error) {
+    console.error('Plan generation reset error:', error);
+    res.status(500).json({
+      error: 'Failed to reset plan generation quotas',
+      message: error.message
+    });
+  }
+});
+
+/**
  * PUT /users/:userId/subscription
  * Update user subscription details
  * Requires Firebase Auth
@@ -2010,9 +2304,9 @@ router.post('/recipes/search', validateApiKey, async (req, res) => {
 /**
  * GET /users/:userId/nutrition-plans
  * Get user's CURRENT ACTIVE nutrition plan only
- * Requires Firebase Auth
+ * Requires Firebase Auth and Active Subscription
  */
-router.get('/users/:userId/nutrition-plans', verifyFirebaseAuth, async (req, res) => {
+router.get('/users/:userId/nutrition-plans', verifyFirebaseAuth, verifySubscriptionForAccess, async (req, res) => {
   try {
     const { userId } = req.params;
 
@@ -2208,9 +2502,9 @@ const selectBalancedMealForDay = (recipes, targetCalories, relax = false) => {
 /**
  * POST /users/:userId/generate-nutrition-plan
  * Generate a personalized 7-day nutrition plan
- * Requires Firebase Auth
+ * Requires Firebase Auth and Active Subscription
  */
-router.post('/users/:userId/generate-nutrition-plan', verifyFirebaseAuth, async (req, res) => {
+router.post('/users/:userId/generate-nutrition-plan', verifyFirebaseAuth, verifyActiveSubscription, async (req, res) => {
   try {
     const { userId } = req.params;
 
@@ -2480,6 +2774,17 @@ router.post('/users/:userId/generate-nutrition-plan', verifyFirebaseAuth, async 
     // Save to Firestore
     const planRef = await db.collection('users').doc(userId).collection('nutritionPlans').add(generatedPlan);
 
+    // Decrement quota and update tracking
+    await db.collection('users').doc(userId).update({
+      planGenerationQuota: admin.firestore.FieldValue.increment(-1),
+      lastPlanGeneratedAt: admin.firestore.FieldValue.serverTimestamp(),
+      totalPlansGenerated: admin.firestore.FieldValue.increment(1)
+    });
+
+    // Get updated quota for response
+    const updatedUserDoc = await db.collection('users').doc(userId).get();
+    const updatedQuota = updatedUserDoc.data().planGenerationQuota || 0;
+
     res.status(201).json({
       success: true,
       message: 'Nutrition plan generated successfully',
@@ -2487,7 +2792,9 @@ router.post('/users/:userId/generate-nutrition-plan', verifyFirebaseAuth, async 
       plan: {
         ...generatedPlan,
         generatedAt: new Date().toISOString()
-      }
+      },
+      quotaRemaining: updatedQuota,
+      subscriptionTier: req.subscriptionData?.tier || 'unknown'
     });
 
   } catch (error) {

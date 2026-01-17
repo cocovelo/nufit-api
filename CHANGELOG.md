@@ -2,6 +2,154 @@
 
 All notable changes to the Nufit API are documented in this file.
 
+## [1.3.0] - 2026-01-17
+
+### Added - Subscription Management & Access Control
+- **NEW FEATURE**: Subscription-based nutrition plan generation quota system
+  - Plans are now gated behind active subscriptions or free trial
+  - Three subscription tiers with different quotas:
+    - `trial`: 1 nutrition plan generation
+    - `one-month`: 4 nutrition plan generations per billing period
+    - `three-month`: 12 nutrition plan generations per billing period
+  
+- **NEW MIDDLEWARE**: `verifyActiveSubscription`
+  - Checks subscription status, expiry date, and remaining quota
+  - Applied to `POST /users/:userId/generate-nutrition-plan`
+  - Returns `402 Payment Required` if no active subscription or quota exceeded
+  - Returns quota information in error responses
+  
+- **NEW MIDDLEWARE**: `verifySubscriptionForAccess`
+  - Soft-blocks access to saved nutrition plans for expired subscriptions
+  - Applied to `GET /users/:userId/nutrition-plans`
+  - Preserves data but prevents access until subscription renewed
+  
+- **NEW ENDPOINT**: `POST /admin/plan-generation-reset`
+  - Admin endpoint to reset plan generation quotas
+  - Can reset single user or all users with active subscriptions
+  - Supports filtering by subscription tier
+  - Requires API Key authentication
+  - Automatically sets quota based on user's subscription tier
+  
+- **NEW FIELDS** in user documents:
+  - `planGenerationQuota`: Number of plans remaining in current period (default: 0)
+  - `lastPlanGeneratedAt`: Timestamp of most recent plan generation
+  - `totalPlansGenerated`: Lifetime counter of all plans generated
+
+### Changed
+- `POST /users/:userId/generate-nutrition-plan` now requires active subscription
+  - Checks subscription status before allowing plan generation
+  - Decrements `planGenerationQuota` after successful generation
+  - Returns `quotaRemaining` and `subscriptionTier` in response
+  - Returns `402 Payment Required` for inactive/expired subscriptions
+  - Returns `429 Quota Exceeded` when quota depleted
+
+- `GET /users/:userId/nutrition-plans` now requires active subscription
+  - Blocks access to saved plans if subscription expired
+  - Returns `402 Access Denied` for expired/inactive subscriptions
+  - Existing 7-day cooldown between generations still applies
+
+- Updated registration to initialize quota tracking fields
+  - New users start with `planGenerationQuota: 0`
+  - Must activate subscription or free trial to generate plans
+
+### Migration Guide
+
+**For existing users without subscriptions:**
+```javascript
+// Users created before v1.3.0 will have planGenerationQuota: 0
+// To generate plans, users must now:
+// 1. Start free trial, OR
+// 2. Subscribe to a paid plan
+
+// Free trial activation (7 days, 1 plan):
+PUT /users/{userId}/subscription
+{
+  "subscriptionTier": "trial",
+  "subscriptionStatus": "active",
+  "freeTrialStartDate": "2026-01-17T00:00:00Z",
+  "freeTrialEndDate": "2026-01-24T00:00:00Z",
+  "planGenerationQuota": 1,
+  "hasUsedFreeTrial": true,
+  "isInFreeTrial": true
+}
+
+// Paid subscription activation (handled via Stripe webhook):
+// Stripe checkout → webhook updates user with quota
+```
+
+**For administrators managing quotas:**
+```javascript
+// Reset quota for specific user
+POST /admin/plan-generation-reset
+Headers: { "x-api-key": "your-api-key" }
+Body: { "userId": "user123" }
+
+// Reset all one-month tier users
+POST /admin/plan-generation-reset
+Headers: { "x-api-key": "your-api-key" }
+Body: { "tier": "one-month" }
+
+// Reset all active subscriptions
+POST /admin/plan-generation-reset
+Headers: { "x-api-key": "your-api-key" }
+Body: {}
+```
+
+**Expected response changes:**
+```javascript
+// Before (v1.2.0):
+POST /users/{userId}/generate-nutrition-plan
+Response: {
+  success: true,
+  planId: "plan123",
+  plan: { ... }
+}
+
+// After (v1.3.0):
+POST /users/{userId}/generate-nutrition-plan
+Response: {
+  success: true,
+  planId: "plan123",
+  plan: { ... },
+  quotaRemaining: 3,           // NEW
+  subscriptionTier: "one-month" // NEW
+}
+
+// Error when no subscription:
+Response: 402 Payment Required {
+  error: "Payment Required",
+  message: "This feature requires an active subscription",
+  subscriptionStatus: "inactive",
+  hasUsedFreeTrial: false,
+  canStartFreeTrial: true,
+  suggestion: "Start your free trial to access this feature"
+}
+
+// Error when quota exceeded:
+Response: 429 Quota Exceeded {
+  error: "Quota Exceeded",
+  message: "You have used all your nutrition plan generations for this billing period",
+  currentQuota: 0,
+  subscriptionTier: "one-month",
+  suggestion: "Your quota will reset on your next billing date, or upgrade to a higher tier for more plans"
+}
+```
+
+### Security
+- Premium features now properly gated behind authentication AND subscription validation
+- Quota tracking prevents abuse even with active subscription
+- Admin endpoints require API key authentication
+
+### Developer Notes
+- Existing 7-day cooldown between plan generations remains active
+- Subscription check happens BEFORE cooldown check
+- Quota is decremented AFTER successful plan generation
+- Failed generations do not consume quota
+- GET endpoints use soft-blocking (data preserved, access blocked)
+- POST endpoints require active subscription with available quota
+
+---
+
 ## [1.2.0] - 2026-01-17
 
 ### Changed
