@@ -18,11 +18,16 @@ const db = admin.firestore();
 /**
  * Rate limiting middleware
  * Limits each IP to 100 requests per 15 minutes
+ * Skip validation for Cloud Functions environment
  */
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 100,
-  message: { error: 'Too many requests, please try again later.' }
+  message: { error: 'Too many requests, please try again later.' },
+  skip: (req, res) => {
+    // Skip rate limiting in Cloud Functions environment or if no IP available
+    return !req.ip || req.ip === '::ffff:127.0.0.1' || process.env.FUNCTION_NAME;
+  }
 });
 
 /**
@@ -106,6 +111,141 @@ const verifyFirebaseAuth = async (req, res, next) => {
 
 // Apply rate limiting to all routes
 router.use(apiLimiter);
+
+// ============================================
+// VALIDATION HELPERS FOR ARRAY FIELDS
+// ============================================
+
+/**
+ * Validate and convert array fields
+ * Converts strings to arrays, validates that result is array
+ */
+const validateArrayField = (fieldValue, fieldName) => {
+  if (fieldValue === undefined || fieldValue === null) {
+    return [];
+  }
+  
+  // If already an array, return it
+  if (Array.isArray(fieldValue)) {
+    return fieldValue.map(item => String(item).trim()).filter(item => item.length > 0);
+  }
+  
+  // If string, try to parse as array or convert to single-item array
+  if (typeof fieldValue === 'string') {
+    const trimmed = fieldValue.trim();
+    // Try to parse as JSON array first
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        return parsed.map(item => String(item).trim()).filter(item => item.length > 0);
+      }
+    } catch (e) {
+      // Not JSON, treat as single item
+    }
+    // If it looks like a comma-separated list, split it
+    if (trimmed.includes(',')) {
+      return trimmed.split(',').map(item => item.trim()).filter(item => item.length > 0);
+    }
+    // Single string item
+    return trimmed.length > 0 ? [trimmed] : [];
+  }
+  
+  // Invalid type
+  throw new Error(`${fieldName} must be an array or string, received ${typeof fieldValue}`);
+};
+
+/**
+ * Create field schema definition for API responses
+ */
+const getFieldSchema = (fieldName, fieldType, isRequired, description = '', additionalProps = {}) => {
+  const schema = {
+    type: fieldType,
+    required: isRequired,
+    description: description,
+    ...additionalProps
+  };
+  return schema;
+};
+
+/**
+ * Get complete schema for diet information endpoint
+ */
+const getDietInformationSchema = () => ({
+  preference: getFieldSchema('preference', 'array', false, 'Array of dietary preferences', { itemType: 'string', example: ['vegetarian', 'gluten-free'] }),
+  allergies: getFieldSchema('allergies', 'array', false, 'Array of food allergens', { itemType: 'string', example: ['peanuts', 'shellfish'] }),
+  waterIntake: getFieldSchema('waterIntake', 'number', false, 'Daily water intake in liters', { range: '0-10', example: 2.5 }),
+  foodPreference: getFieldSchema('foodPreference', 'array', false, 'Array of food preferences', { itemType: 'string', example: ['organic', 'local', 'non-GMO'] }),
+  useSupplements: getFieldSchema('useSupplements', 'boolean', false, 'Whether user uses dietary supplements'),
+  supplementIntake: getFieldSchema('supplementIntake', 'array', false, 'Array of supplement names', { itemType: 'string', example: ['protein powder', 'vitamins'] }),
+  goal: getFieldSchema('goal', 'string', true, 'Nutritional goal', { enum: ['lose weight', 'gain muscle', 'maintain'] }),
+  mealsPerDay: getFieldSchema('mealsPerDay', 'number', false, 'Number of meals per day', { range: '1-8', type: 'integer', example: 3 }),
+  preferredEatingTimes: getFieldSchema('preferredEatingTimes', 'array', false, 'Meal times in HH:MM format', { itemType: 'string', format: 'HH:MM', example: ['08:00', '12:00', '18:00'] }),
+  snackHabits: getFieldSchema('snackHabits', 'array', false, 'Array of snacking habits', { itemType: 'string', example: ['nuts', 'fruits', 'yogurt'] }),
+  foodDislikes: getFieldSchema('foodDislikes', 'array', false, 'Array of disliked foods', { itemType: 'string', example: ['spicy foods', 'mushrooms'] }),
+  willingness: getFieldSchema('willingness', 'array', false, 'Array of dietary changes willing to make', { itemType: 'string', example: ['reduce sugar', 'eat more vegetables'] })
+});
+
+/**
+ * Get complete schema for health information endpoint
+ */
+const getHealthInformationSchema = () => ({
+  age: getFieldSchema('age', 'number', false, 'Age in years', { type: 'integer', range: '18-120' }),
+  gender: getFieldSchema('gender', 'string', false, 'Gender', { enum: ['male', 'female'] }),
+  height: getFieldSchema('height', 'number', false, 'Height in centimeters', { range: '100-250' }),
+  weight: getFieldSchema('weight', 'number', false, 'Weight in kilograms', { range: '30-300' }),
+  medicalConditions: getFieldSchema('medicalConditions', 'array', false, 'Array of medical conditions', { itemType: 'string', example: ['diabetes', 'hypertension'] }),
+  allergies: getFieldSchema('allergies', 'array', false, 'Array of medical allergies (drug allergies)', { itemType: 'string', example: ['penicillin'] }),
+  smokingHabit: getFieldSchema('smokingHabit', 'string', false, 'Smoking status', { enum: ['non-smoker', 'occasional', 'regular'] }),
+  sleepDuration: getFieldSchema('sleepDuration', 'number', false, 'Hours of sleep per night', { range: '0-24' }),
+  stressLevel: getFieldSchema('stressLevel', 'string', false, 'Stress level', { enum: ['low', 'moderate', 'high'] }),
+  pastInjuries: getFieldSchema('pastInjuries', 'array', false, 'Array of past injuries with descriptions', { itemType: 'string', example: ['knee injury in 2020'] }),
+  medications: getFieldSchema('medications', 'array', false, 'Array of current medications', { itemType: 'string', example: ['metformin', 'aspirin'] }),
+  currentAlcohol: getFieldSchema('currentAlcohol', 'string', false, 'Alcohol consumption frequency', { enum: ['none', 'occasional', 'moderate', 'frequent'] }),
+  lastAlcohol: getFieldSchema('lastAlcohol', 'string', false, 'Last alcoholic drink date', { format: 'ISO date (YYYY-MM-DD)' }),
+  otherIssues: getFieldSchema('otherIssues', 'string', false, 'Other health concerns')
+});
+
+/**
+ * Get complete schema for exercise preference endpoint (Phase 4)
+ */
+const getExercisePreferenceSchema = () => ({
+  fitnessGoal: getFieldSchema('fitnessGoal', 'string', false, 'Primary fitness goal', { enum: ['weight loss', 'muscle gain', 'endurance', 'flexibility', 'general fitness'] }),
+  workoutFrequency: getFieldSchema('workoutFrequency', 'string', false, 'Workouts per week', { enum: ['1-2', '3-4', '5-6', 'daily'] }),
+  workoutPreferredTime: getFieldSchema('workoutPreferredTime', 'string', false, 'Preferred workout time', { enum: ['morning', 'afternoon', 'evening', 'anytime'] }),
+  workoutSetting: getFieldSchema('workoutSetting', 'string', false, 'Preferred environment', { enum: ['home', 'gym', 'outdoor', 'mixed'] }),
+  workoutPreferredType: getFieldSchema('workoutPreferredType', 'array', false, 'Array of preferred exercise types', { itemType: 'string', example: ['cardio', 'strength', 'yoga'] }),
+  workoutDuration: getFieldSchema('workoutDuration', 'number', false, 'Preferred workout duration in minutes', { range: '15-180', type: 'integer' }),
+  equipmentAccess: getFieldSchema('equipmentAccess', 'array', false, 'Array of available equipment types', { itemType: 'string', example: ['dumbbells', 'treadmill', 'yoga mat'] }),
+  workoutNotification: getFieldSchema('workoutNotification', 'string', false, 'Notification preference', { enum: ['daily', 'weekly', 'never'] })
+});
+
+/**
+ * Get complete schema for weekly exercise endpoint (Phase 5)
+ */
+const getWeeklyExerciseSchema = () => ({
+  weeklyActivity: getFieldSchema('weeklyActivity', 'object', false, 'Daily activity schedule', { 
+    format: '{ "Monday": { "activityName": "string", "duration": number, "calories": number }, ... }',
+    daysOfWeek: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'],
+    example: {
+      Monday: { activityName: 'Running', duration: 45, calories: 400 },
+      Friday: { activityName: 'Swimming', duration: 30, calories: 300 },
+      Sunday: { activityName: 'Yoga', duration: 45, calories: 150 }
+    }
+  })
+});
+
+/**
+ * Get complete schema for subscription endpoint
+ */
+const getSubscriptionSchema = () => ({
+  subscriptionId: getFieldSchema('subscriptionId', 'string', false, 'Stripe subscription ID'),
+  planName: getFieldSchema('planName', 'string', false, 'Name of subscription plan', { enum: ['free', 'basic', 'premium', 'family'] }),
+  amount: getFieldSchema('amount', 'number', false, 'Monthly subscription cost', { currency: 'USD' }),
+  status: getFieldSchema('status', 'string', false, 'Subscription status', { enum: ['active', 'inactive', 'canceled', 'expired'] }),
+  startDate: getFieldSchema('startDate', 'string', false, 'Subscription start date', { format: 'ISO date (YYYY-MM-DD)' }),
+  renewalDate: getFieldSchema('renewalDate', 'string', false, 'Next renewal date', { format: 'ISO date (YYYY-MM-DD)' }),
+  autoRenewal: getFieldSchema('autoRenewal', 'boolean', false, 'Auto-renewal enabled status')
+});
 
 // ============================================
 // PUBLIC ENDPOINTS (No Auth Required)
@@ -302,6 +442,8 @@ router.post('/users/register', async (req, res) => {
     if (!name) missingFields.push('name');
     if (!email) missingFields.push('email');
     if (!password) missingFields.push('password');
+    if (!mobile) missingFields.push('mobile');
+    if (!address) missingFields.push('address');
     
     if (missingFields.length > 0) {
       return res.status(400).json({
@@ -309,8 +451,8 @@ router.post('/users/register', async (req, res) => {
         message: `The following required fields are missing: ${missingFields.join(', ')}`,
         missingFields: missingFields,
         receivedFields: Object.keys(req.body),
-        requiredFields: ['name', 'email', 'password'],
-        optionalFields: ['mobile', 'address']
+        requiredFields: ['name', 'email', 'password', 'mobile', 'address'],
+        optionalFields: []
       });
     }
 
@@ -465,6 +607,15 @@ router.post('/users/register', async (req, res) => {
         exercisePreference: false,
         weeklyExercise: false,
         complete: false
+      },
+      schema: {
+        basicInfo: {
+          name: getFieldSchema('name', 'string', true, 'User full name'),
+          email: getFieldSchema('email', 'string', true, 'User email address'),
+          password: getFieldSchema('password', 'string', true, 'User password (min 6 characters)'),
+          mobile: getFieldSchema('mobile', 'string', false, 'User phone number'),
+          address: getFieldSchema('address', 'string', false, 'User address')
+        }
       }
     });
 
@@ -608,6 +759,9 @@ router.get('/users/exchange-token/:customToken', async (req, res) => {
 });
 
 /**
+ * GET /users/:userId/profile
+ * Get user profile information - requires authentication
+ */
 router.get('/users/:userId/profile', verifyFirebaseAuth, async (req, res) => {
   try {
     const { userId } = req.params;
@@ -781,7 +935,8 @@ router.put('/users/:userId/diet-information', verifyFirebaseAuth, async (req, re
     if (!goal) {
       return res.status(400).json({
         error: 'Missing required field',
-        message: 'goal is required'
+        message: 'goal is required',
+        schema: getDietInformationSchema()
       });
     }
 
@@ -790,7 +945,8 @@ router.put('/users/:userId/diet-information', verifyFirebaseAuth, async (req, re
     if (!validGoals.some(g => g.toLowerCase() === goal.toLowerCase())) {
       return res.status(400).json({
         error: 'Invalid goal',
-        message: `goal must be one of: ${validGoals.join(', ')}`
+        message: `goal must be one of: ${validGoals.join(', ')}`,
+        schema: getDietInformationSchema()
       });
     }
 
@@ -798,7 +954,8 @@ router.put('/users/:userId/diet-information', verifyFirebaseAuth, async (req, re
     if (waterIntake && (isNaN(parseFloat(waterIntake)) || parseFloat(waterIntake) < 0)) {
       return res.status(400).json({
         error: 'Invalid waterIntake',
-        message: 'Water intake must be a positive number'
+        message: 'Water intake must be a positive number',
+        schema: getDietInformationSchema()
       });
     }
 
@@ -806,23 +963,69 @@ router.put('/users/:userId/diet-information', verifyFirebaseAuth, async (req, re
     if (mealsPerDay && (isNaN(parseInt(mealsPerDay)) || parseInt(mealsPerDay) < 1 || parseInt(mealsPerDay) > 8)) {
       return res.status(400).json({
         error: 'Invalid mealsPerDay',
-        message: 'Meals per day must be between 1 and 8'
+        message: 'Meals per day must be between 1 and 8',
+        schema: getDietInformationSchema()
+      });
+    }
+
+    // Validate and convert array fields
+    let validatedPreference = [];
+    let validatedAllergies = [];
+    let validatedFoodPreference = [];
+    let validatedSupplementIntake = [];
+    let validatedPreferredEatingTimes = [];
+    let validatedSnackHabits = [];
+    let validatedFoodDislikes = [];
+    let validatedWillingness = [];
+
+    try {
+      if (preference !== undefined && preference !== null) {
+        validatedPreference = validateArrayField(preference, 'preference');
+      }
+      if (allergies !== undefined && allergies !== null) {
+        validatedAllergies = validateArrayField(allergies, 'allergies');
+      }
+      if (foodPreference !== undefined && foodPreference !== null) {
+        validatedFoodPreference = validateArrayField(foodPreference, 'foodPreference');
+      }
+      if (supplementIntake !== undefined && supplementIntake !== null) {
+        validatedSupplementIntake = validateArrayField(supplementIntake, 'supplementIntake');
+      }
+      if (preferredEatingTimes !== undefined && preferredEatingTimes !== null) {
+        validatedPreferredEatingTimes = validateArrayField(preferredEatingTimes, 'preferredEatingTimes');
+      }
+      if (snackHabits !== undefined && snackHabits !== null) {
+        validatedSnackHabits = validateArrayField(snackHabits, 'snackHabits');
+      }
+      if (foodDislikes !== undefined && foodDislikes !== null) {
+        validatedFoodDislikes = validateArrayField(foodDislikes, 'foodDislikes');
+      }
+      if (willingness !== undefined && willingness !== null) {
+        validatedWillingness = validateArrayField(willingness, 'willingness');
+      }
+    } catch (validationError) {
+      return res.status(400).json({
+        error: 'Invalid field format',
+        message: validationError.message,
+        hint: 'Array fields must be provided as arrays or comma-separated strings',
+        arrayFields: ['preference', 'allergies', 'foodPreference', 'supplementIntake', 'preferredEatingTimes', 'snackHabits', 'foodDislikes', 'willingness'],
+        schema: getDietInformationSchema()
       });
     }
 
     const dietInfo = {
-      preference: preference || '',
-      allergies: allergies || '',
+      preference: validatedPreference,
+      allergies: validatedAllergies,
       waterIntake: waterIntake ? parseFloat(waterIntake) : null,
-      foodPreference: foodPreference || '',
-      useSupplements: useSupplements || '',
-      supplementIntake: supplementIntake || '',
+      foodPreference: validatedFoodPreference,
+      useSupplements: useSupplements || false,
+      supplementIntake: validatedSupplementIntake,
       goal: goal,
       mealsPerDay: mealsPerDay ? parseInt(mealsPerDay) : 3,
-      preferredEatingTimes: preferredEatingTimes || '',
-      snackHabits: snackHabits || '',
-      foodDislikes: foodDislikes || '',
-      willingness: willingness || '',
+      preferredEatingTimes: validatedPreferredEatingTimes,
+      snackHabits: validatedSnackHabits,
+      foodDislikes: validatedFoodDislikes,
+      willingness: validatedWillingness,
       'registrationSteps.dietInfo': true,
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     };
@@ -837,14 +1040,16 @@ router.put('/users/:userId/diet-information', verifyFirebaseAuth, async (req, re
       success: true,
       message: 'Diet information updated successfully (Phase 2/5)',
       nextStep: 'Complete health information at PUT /v1/users/{userId}/health-information',
-      registrationProgress: steps
+      registrationProgress: steps,
+      schema: getDietInformationSchema()
     });
 
   } catch (error) {
     console.error('Error updating diet information:', error);
     res.status(500).json({
       error: 'Failed to update diet information',
-      message: error.message
+      message: error.message,
+      schema: getDietInformationSchema()
     });
   }
 });
@@ -877,14 +1082,69 @@ router.put('/users/:userId/health-information', verifyFirebaseAuth, async (req, 
       currentAlcohol,
       lastAlcohol,
       otherIssues,
-      gender
+      gender,
+      age,
+      height,
+      weight
     } = req.body;
 
-    // Validate gender (if provided)
-    if (gender && !['male', 'female'].includes(gender.toLowerCase())) {
+    // Validate required fields for nutrition plan generation
+    const missingFields = [];
+    if (!age) missingFields.push('age');
+    if (!gender) missingFields.push('gender');
+    if (!height) missingFields.push('height');
+    if (!weight) missingFields.push('weight');
+    
+    if (missingFields.length > 0) {
+      return res.status(400).json({
+        error: 'Missing required fields',
+        message: `The following fields are required for nutrition plan generation: ${missingFields.join(', ')}`,
+        missingFields: missingFields,
+        requiredFields: ['age', 'gender', 'height', 'weight'],
+        schema: getHealthInformationSchema()
+      });
+    }
+
+    // Validate age
+    const parsedAge = typeof age === 'string' ? parseInt(age) : age;
+    if (isNaN(parsedAge) || parsedAge < 18 || parsedAge > 120) {
+      return res.status(400).json({
+        error: 'Invalid age',
+        message: 'Age must be a number between 18 and 120',
+        receivedValue: age,
+        schema: getHealthInformationSchema()
+      });
+    }
+
+    // Validate height (in centimeters)
+    const parsedHeight = typeof height === 'string' ? parseFloat(height) : height;
+    if (isNaN(parsedHeight) || parsedHeight < 100 || parsedHeight > 250) {
+      return res.status(400).json({
+        error: 'Invalid height',
+        message: 'Height must be a number between 100 and 250 cm',
+        receivedValue: height,
+        schema: getHealthInformationSchema()
+      });
+    }
+
+    // Validate weight (in kilograms)
+    const parsedWeight = typeof weight === 'string' ? parseFloat(weight) : weight;
+    if (isNaN(parsedWeight) || parsedWeight < 30 || parsedWeight > 300) {
+      return res.status(400).json({
+        error: 'Invalid weight',
+        message: 'Weight must be a number between 30 and 300 kg',
+        receivedValue: weight,
+        schema: getHealthInformationSchema()
+      });
+    }
+
+    // Validate gender
+    if (!['male', 'female'].includes(gender.toLowerCase())) {
       return res.status(400).json({
         error: 'Invalid gender',
-        message: 'Gender must be "male" or "female"'
+        message: 'Gender must be "male" or "female"',
+        receivedValue: gender,
+        schema: getHealthInformationSchema()
       });
     }
 
@@ -892,22 +1152,55 @@ router.put('/users/:userId/health-information', verifyFirebaseAuth, async (req, 
     if (sleepDuration && (isNaN(parseFloat(sleepDuration)) || parseFloat(sleepDuration) < 0 || parseFloat(sleepDuration) > 24)) {
       return res.status(400).json({
         error: 'Invalid sleepDuration',
-        message: 'Sleep duration must be between 0 and 24 hours'
+        message: 'Sleep duration must be between 0 and 24 hours',
+        schema: getHealthInformationSchema()
+      });
+    }
+
+    // Validate and convert array fields
+    let validatedMedicalConditions = [];
+    let validatedAllergies = [];
+    let validatedPastInjuries = [];
+    let validatedMedications = [];
+
+    try {
+      if (medicalConditions !== undefined && medicalConditions !== null) {
+        validatedMedicalConditions = validateArrayField(medicalConditions, 'medicalConditions');
+      }
+      if (allergies !== undefined && allergies !== null) {
+        validatedAllergies = validateArrayField(allergies, 'allergies');
+      }
+      if (pastInjuries !== undefined && pastInjuries !== null) {
+        validatedPastInjuries = validateArrayField(pastInjuries, 'pastInjuries');
+      }
+      if (medications !== undefined && medications !== null) {
+        validatedMedications = validateArrayField(medications, 'medications');
+      }
+    } catch (validationError) {
+      return res.status(400).json({
+        error: 'Invalid field format',
+        message: validationError.message,
+        hint: 'Array fields must be provided as arrays or comma-separated strings',
+        arrayFields: ['medicalConditions', 'allergies', 'pastInjuries', 'medications'],
+        schema: getHealthInformationSchema()
       });
     }
 
     const healthInfo = {
-      medicalConditions: medicalConditions || '',
-      allergies: allergies || '',
+      medicalConditions: validatedMedicalConditions,
+      allergies: validatedAllergies,
       smokingHabit: smokingHabit || '',
       sleepDuration: sleepDuration ? parseFloat(sleepDuration) : null,
       stressLevel: stressLevel || '',
-      pastInjuries: pastInjuries || '',
-      medications: medications || '',
+      pastInjuries: validatedPastInjuries,
+      medications: validatedMedications,
       currentAlcohol: currentAlcohol || '',
       lastAlcohol: lastAlcohol || '',
       otherIssues: otherIssues || '',
-      gender: gender || '',
+      gender: gender,
+      age: parsedAge,
+      height: parsedHeight,
+      weight: parsedWeight,
       'registrationSteps.healthInfo': true,
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     };
@@ -922,14 +1215,16 @@ router.put('/users/:userId/health-information', verifyFirebaseAuth, async (req, 
       success: true,
       message: 'Health information updated successfully (Phase 3/5)',
       nextStep: 'Complete exercise preference at PUT /v1/users/{userId}/exercise-preference',
-      registrationProgress: steps
+      registrationProgress: steps,
+      schema: getHealthInformationSchema()
     });
 
   } catch (error) {
     console.error('Error updating health information:', error);
     res.status(500).json({
       error: 'Failed to update health information',
-      message: error.message
+      message: error.message,
+      schema: getHealthInformationSchema()
     });
   }
 });
@@ -966,7 +1261,29 @@ router.put('/users/:userId/exercise-preference', verifyFirebaseAuth, async (req,
     if (workoutDuration && (isNaN(parseInt(workoutDuration)) || parseInt(workoutDuration) < 0)) {
       return res.status(400).json({
         error: 'Invalid workoutDuration',
-        message: 'Workout duration must be a positive number'
+        message: 'Workout duration must be a positive number',
+        schema: getExercisePreferenceSchema()
+      });
+    }
+
+    // Validate and convert array fields
+    let validatedWorkoutPreferredType = [];
+    let validatedEquipmentAccess = [];
+
+    try {
+      if (workoutPreferredType !== undefined && workoutPreferredType !== null) {
+        validatedWorkoutPreferredType = validateArrayField(workoutPreferredType, 'workoutPreferredType');
+      }
+      if (equipmentAccess !== undefined && equipmentAccess !== null) {
+        validatedEquipmentAccess = validateArrayField(equipmentAccess, 'equipmentAccess');
+      }
+    } catch (validationError) {
+      return res.status(400).json({
+        error: 'Invalid field format',
+        message: validationError.message,
+        hint: 'Array fields must be provided as arrays or comma-separated strings',
+        arrayFields: ['workoutPreferredType', 'equipmentAccess'],
+        schema: getExercisePreferenceSchema()
       });
     }
 
@@ -975,9 +1292,9 @@ router.put('/users/:userId/exercise-preference', verifyFirebaseAuth, async (req,
       workoutFrequency: workoutFrequency || '',
       workoutPreferredTime: workoutPreferredTime || '',
       workoutSetting: workoutSetting || '',
-      workoutPreferredType: workoutPreferredType || '',
+      workoutPreferredType: validatedWorkoutPreferredType,
       workoutDuration: workoutDuration ? parseInt(workoutDuration) : null,
-      equipmentAccess: equipmentAccess || '',
+      equipmentAccess: validatedEquipmentAccess,
       workoutNotification: workoutNotification || '',
       'registrationSteps.exercisePreference': true,
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
@@ -993,7 +1310,8 @@ router.put('/users/:userId/exercise-preference', verifyFirebaseAuth, async (req,
       success: true,
       message: 'Exercise preference updated successfully (Phase 4/5)',
       nextStep: 'Complete weekly exercise schedule at PUT /v1/users/{userId}/weekly-exercise',
-      registrationProgress: steps
+      registrationProgress: steps,
+      schema: getExercisePreferenceSchema()
     });
 
   } catch (error) {
@@ -1107,7 +1425,8 @@ router.put('/users/:userId/weekly-exercise', verifyFirebaseAuth, async (req, res
       message: 'Weekly exercise schedule updated successfully. Registration complete!',
       registrationComplete: true,
       totalWeeklyCalories: totalWeeklyCalories,
-      nextStep: 'You can now generate your personalized nutrition plan'
+      nextStep: 'You can now generate your personalized nutrition plan',
+      schema: getWeeklyExerciseSchema()
     });
 
   } catch (error) {
@@ -1360,7 +1679,10 @@ router.get('/users/:userId/subscription', verifyFirebaseAuth, async (req, res) =
       }
     };
 
-    res.json(subscriptionDetails);
+    res.json({
+      ...subscriptionDetails,
+      schema: getSubscriptionSchema()
+    });
 
   } catch (error) {
     console.error('Error fetching subscription details:', error);
@@ -1581,7 +1903,8 @@ router.put('/users/:userId/subscription', verifyFirebaseAuth, async (req, res) =
         tier: updatedData.subscriptionTier || null,
         hasFreeTrial: updatedData.isInFreeTrial || false,
         discountCode: updatedData.discountCode || null
-      }
+      },
+      schema: getSubscriptionSchema()
     });
 
   } catch (error) {
@@ -1858,10 +2181,14 @@ const shuffleArray = arr => {
 };
 
 const filterRecipes = (recipes, allergies, dislikes) => {
+  // Ensure allergies and dislikes are arrays
+  const allergyArray = Array.isArray(allergies) ? allergies : (allergies ? [allergies] : []);
+  const dislikeArray = Array.isArray(dislikes) ? dislikes : (dislikes ? [dislikes] : []);
+  
   return recipes.filter(recipe => {
     const ing = (recipe.Ingredients || '').toLowerCase();
-    return !allergies.some(a => ing.includes(a.toLowerCase())) &&
-           !dislikes.some(d => ing.includes(d.toLowerCase()));
+    return !allergyArray.some(a => ing.includes(String(a).toLowerCase())) &&
+           !dislikeArray.some(d => ing.includes(String(d).toLowerCase()));
   });
 };
 
@@ -1908,7 +2235,7 @@ router.post('/users/:userId/generate-nutrition-plan', verifyFirebaseAuth, async 
       
       if (!steps.basicInfo) missingSteps.push('Basic Information (name, email, mobile, address)');
       if (!steps.dietInfo) missingSteps.push('Diet Information (dietary preferences, allergies, goals)');
-      if (!steps.healthInfo) missingSteps.push('Health Information (medical conditions, sleep, stress levels)');
+      if (!steps.healthInfo) missingSteps.push('Health Information (medical conditions, sleep, stress levels, age, height, weight, gender)');
       if (!steps.exercisePreference) missingSteps.push('Exercise Preferences (fitness goals, workout types)');
       if (!steps.weeklyExercise) missingSteps.push('Weekly Exercise Schedule (activity schedule for each day)');
 
@@ -1917,6 +2244,26 @@ router.post('/users/:userId/generate-nutrition-plan', verifyFirebaseAuth, async 
         message: 'Please complete all registration steps before generating a nutrition plan',
         missingSteps: missingSteps,
         registrationSteps: steps
+      });
+    }
+
+    // Validate that required health fields exist for nutrition plan generation
+    const requiredHealthFields = ['age', 'gender', 'height', 'weight'];
+    const missingHealthFields = [];
+    
+    requiredHealthFields.forEach(field => {
+      if (!userData[field]) {
+        missingHealthFields.push(field);
+      }
+    });
+    
+    if (missingHealthFields.length > 0) {
+      return res.status(400).json({
+        error: 'Incomplete health information',
+        message: 'Please complete your health information (Phase 3) with the following required fields: ' + missingHealthFields.join(', '),
+        missingFields: missingHealthFields,
+        requiredFields: requiredHealthFields,
+        hint: 'Please update PUT /v1/users/{userId}/health-information with age, gender, height, and weight'
       });
     }
 
@@ -2031,8 +2378,33 @@ router.post('/users/:userId/generate-nutrition-plan', verifyFirebaseAuth, async 
     }
 
     // Fetch and filter recipes
-    const allergyList = foodAllergies.split(',').map(s => s.trim()).filter(Boolean);
-    const dislikeList = foodDislikes.split(',').map(s => s.trim()).filter(Boolean);
+    // Handle foodAllergies - ensure it's an array
+    let allergyList = [];
+    if (userData.foodAllergies) {
+      allergyList = Array.isArray(userData.foodAllergies) 
+        ? userData.foodAllergies.map(s => String(s).trim()).filter(Boolean)
+        : String(userData.foodAllergies).split(',').map(s => s.trim()).filter(Boolean);
+    }
+    if (req.body.foodAllergies) {
+      const bodyAllergies = Array.isArray(req.body.foodAllergies)
+        ? req.body.foodAllergies.map(s => String(s).trim()).filter(Boolean)
+        : String(req.body.foodAllergies).split(',').map(s => s.trim()).filter(Boolean);
+      allergyList = bodyAllergies;
+    }
+    
+    // Handle foodDislikes - ensure it's an array
+    let dislikeList = [];
+    if (userData.foodDislikes) {
+      dislikeList = Array.isArray(userData.foodDislikes)
+        ? userData.foodDislikes.map(s => String(s).trim()).filter(Boolean)
+        : String(userData.foodDislikes).split(',').map(s => s.trim()).filter(Boolean);
+    }
+    if (req.body.foodDislikes) {
+      const bodyDislikes = Array.isArray(req.body.foodDislikes)
+        ? req.body.foodDislikes.map(s => String(s).trim()).filter(Boolean)
+        : String(req.body.foodDislikes).split(',').map(s => s.trim()).filter(Boolean);
+      dislikeList = bodyDislikes;
+    }
 
     const [breakfastRaw, lunchRaw, dinnerRaw, snackRaw] = await Promise.all([
       fetchRecipes('breakfast_list_full_may2025'),
