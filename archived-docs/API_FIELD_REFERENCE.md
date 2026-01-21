@@ -90,6 +90,10 @@ This guide maps every field in the Nufit API to help your mobile app properly co
 **Fields the App COLLECTS:**
 ```json
 {
+  "age": 28,                                      // Required for nutrition plan: integer 18-120
+  "gender": "male",                               // Required for nutrition plan: 'male' or 'female'
+  "height": 180,                                  // Required for nutrition plan: integer 100-250 (cm)
+  "weight": 75,                                   // Required for nutrition plan: integer 30-300 (kg)
   "medicalConditions": "diabetes, hypertension",  // Existing conditions
   "allergies": ["penicillin"],                    // Medical allergies
   "smokingHabit": "non-smoker",                   // Smoking status
@@ -104,11 +108,17 @@ This guide maps every field in the Nufit API to help your mobile app properly co
 ```
 
 **Validation Rules:**
+- `age`: integer (18-120) **REQUIRED for nutrition plan generation**
+- `gender`: string (male, female) **REQUIRED for nutrition plan generation**
+- `height`: integer (100-250 cm) **REQUIRED for nutrition plan generation**
+- `weight`: integer (30-300 kg) **REQUIRED for nutrition plan generation**
 - `sleepDuration`: number (0-24 hours)
 - `stressLevel`: string (low, moderate, high)
 - `smokingHabit`: string (non-smoker, occasional, regular)
 - `currentAlcohol`: string (none, occasional, moderate, frequent)
 - `lastAlcohol`: ISO date string (YYYY-MM-DD)
+
+**Important:** If any of age, gender, height, or weight are missing when generating a nutrition plan, the API will return a 400 error with details on which fields are missing.
 
 ---
 

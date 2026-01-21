@@ -5,7 +5,20 @@ This project implements a hybrid API approach with both REST endpoints and Fireb
 **Version:** 1.4.0  
 **Last Updated:** January 21, 2026
 
-## 🔐 Important: GitHub Security Alert Response
+## � Documentation Index
+
+**Primary Documentation:**
+- **[API_DOCUMENTATION.md](API_DOCUMENTATION.md)** - Complete API reference, all endpoints, subscription system
+- **[README.md](README.md)** (this file) - Setup instructions, architecture, quick start
+- **[CHANGELOG.md](CHANGELOG.md)** - Version history and release notes
+- **[TESTING_GUIDE.md](TESTING_GUIDE.md)** - Testing procedures and scripts
+
+**Archived Documentation:**
+- **[archived-docs/](archived-docs/)** - Historical docs consolidated into primary files
+
+---
+
+## �🔐 Important: GitHub Security Alert Response
 
 **GitHub detected Firebase API keys in this repository - this is SAFE and intentional!**
 

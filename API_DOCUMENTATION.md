@@ -776,6 +776,181 @@ Update subscription.
 
 ---
 
+### Subscription System: How It Works
+
+#### Overview
+
+The subscription system controls how many nutrition plans users can generate based on their subscription tier. Each tier has a defined quota that is automatically managed through middleware checks, scheduled functions, and database updates.
+
+#### Subscription Tiers & Quotas
+
+| Tier | Price | Duration | Quota | Reset |
+|------|-------|----------|-------|-------|
+| Free Trial | Free | 7 days | 1 plan | Never (one-time) |
+| Monthly | 300 AED | 30 days | 4 plans | Every 30 days |
+| Quarterly | 750 AED | 90 days | 12 plans | Every 30 days |
+
+#### User Subscription Fields
+
+Each user document in Firestore contains:
+
+```javascript
+{
+  subscriptionTier: "one-month",           // Current tier
+  subscriptionStatus: "active",            // active/inactive/expired
+  subscriptionStartDate: "2026-01-21",     // When subscription started
+  subscriptionEndDate: "2026-02-21",       // When it expires
+  planGenerationQuota: 3,                  // Plans remaining this period
+  lastPlanGeneratedAt: "2026-01-18",       // Last generation timestamp
+  totalPlansGenerated: 1,                  // Lifetime counter
+  
+  freeTrial: {
+    hasEverUsedTrial: false,               // Prevents multiple trials
+    isCurrentlyInTrial: false              // Currently in trial period
+  }
+}
+```
+
+#### Plan Generation Flow
+
+**1. User Request:** `POST /users/:userId/generate-nutrition-plan`
+
+**2. Middleware Checks** (`verifyActiveSubscription`):
+   - ✅ Subscription status must be `'active'`
+   - ✅ Current date must be before `subscriptionEndDate`
+   - ✅ `planGenerationQuota` must be > 0
+   - ❌ If any check fails → `402 Payment Required` or `429 Quota Exceeded`
+
+**3. Plan Generation:**
+   - Generate the 7-day nutrition plan
+   - Decrement `planGenerationQuota` by 1
+   - Update `lastPlanGeneratedAt` timestamp
+   - Increment `totalPlansGenerated` counter
+
+**4. Response:**
+```json
+{
+  "success": true,
+  "planId": "plan_abc123",
+  "quotaRemaining": 3,
+  "subscriptionTier": "one-month"
+}
+```
+
+#### Free Trial vs Paid Subscriptions
+
+**Free Trial Activation:**
+- User calls: `PUT /users/:userId/subscription` with `{ activateFreeTrial: true }`
+- System checks: User hasn't used trial before
+- Sets: `quota = 1`, `duration = 7 days`, marks trial as used
+- User can generate **1 plan only**, never resets
+- After 7 days, subscription expires automatically
+
+**Paid Subscription Activation:**
+- Triggered by Stripe webhook after successful payment
+- Sets: `quota = 4 or 12`, calculates end date
+- User can generate multiple plans
+- Quota resets every 30 days on subscription anniversary
+
+#### Automated Quota Management
+
+**Quota Reset (3:00 AM UTC daily):**
+```javascript
+// scheduledResetQuotas function
+// For each active subscription:
+//   - Calculate days since subscription start
+//   - If it's a 30-day anniversary (day 30, 60, 90...):
+//     - Reset quota to tier default (4 or 12)
+//   - Free trial: Skip (never resets)
+```
+
+**Subscription Expiry (2:00 AM UTC daily):**
+```javascript
+// scheduledExpireSubscriptions function
+// Find subscriptions where endDate <= today:
+//   - Set status to 'expired'
+//   - Set quota to 0
+//   - End free trial if active
+```
+
+#### Complete User Journey Example
+
+**Day 1 - Sign Up & Free Trial:**
+```
+→ User registers
+→ Calls: PUT /subscription { activateFreeTrial: true }
+→ Gets: quota=1, status=active, endDate=Day 8
+→ Generates 1 plan → quota=0
+→ Tries again → 429 "Quota exceeded"
+```
+
+**Day 8 - Trial Expires:**
+```
+→ scheduledExpireSubscriptions runs at 2 AM
+→ status=expired, quota=0
+→ User blocked from generating plans
+```
+
+**Day 9 - Upgrade to Monthly:**
+```
+→ User pays 300 AED via Stripe
+→ Webhook updates: tier=one-month, quota=4, endDate=Day 39
+→ User can generate 4 plans
+```
+
+**Day 39 - Monthly Reset:**
+```
+→ scheduledResetQuotas runs at 3 AM
+→ 30 days passed since Day 9
+→ quota reset to 4
+→ User can generate 4 more plans
+```
+
+**Day 69 - Second Reset:**
+```
+→ Another 30 days passed
+→ quota reset to 4 again
+```
+
+**Day 109 - Subscription Expires:**
+```
+→ No payment renewal
+→ scheduledExpireSubscriptions runs
+→ status=expired, quota=0
+→ User must renew to continue
+```
+
+#### API Error Responses
+
+**No Active Subscription (402):**
+```json
+{
+  "error": "No active subscription",
+  "message": "Please activate a subscription or free trial to generate nutrition plans"
+}
+```
+
+**Subscription Expired (402):**
+```json
+{
+  "error": "Subscription expired",
+  "expiresAt": "2026-01-28T00:00:00.000Z",
+  "message": "Your subscription has expired. Please renew to continue."
+}
+```
+
+**Quota Exceeded (429):**
+```json
+{
+  "error": "Quota exceeded",
+  "message": "You have used all your plan generations for this period",
+  "quotaRemaining": 0,
+  "nextResetDate": "2026-02-20T00:00:00.000Z"
+}
+```
+
+---
+
 #### POST /payments/create-checkout
 Create Stripe checkout session.
 

@@ -179,6 +179,10 @@ async function submitHealthInfo(userId, idToken) {
       'Authorization': `Bearer ${idToken}`
     },
     body: JSON.stringify({
+      age: 28,                                      // Required: integer 18-120 (for nutrition plan)
+      gender: 'male',                               // Required: 'male' or 'female' (for nutrition plan)
+      height: 180,                                  // Required: integer 100-250 in cm (for nutrition plan)
+      weight: 75,                                   // Required: integer 30-300 in kg (for nutrition plan)
       medicalConditions: 'diabetes, hypertension',  // Required: existing conditions
       allergies: ['penicillin'],                    // Optional: medical allergies
       smokingHabit: 'non-smoker',                   // Required: non-smoker, occasional, regular
@@ -496,6 +500,10 @@ async function completeRegistrationWorkflow() {
       method: 'PUT',
       headers,
       body: JSON.stringify({
+        age: 28,
+        gender: 'male',
+        height: 180,
+        weight: 75,
         medicalConditions: 'none',
         smokingHabit: 'non-smoker',
         sleepDuration: 8,
