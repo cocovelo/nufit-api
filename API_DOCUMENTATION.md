@@ -1,7 +1,7 @@
 # Nufit API - Complete Documentation
 
-**Last Updated:** January 17, 2026  
-**API Version:** 1.0.0  
+**Last Updated:** January 21, 2026  
+**API Version:** 1.4.0  
 **Status:** Production  
 **Field Names:** Frozen - No changes permitted without explicit request
 
@@ -54,6 +54,7 @@ const auth = getAuth(app);
 - `GET /recipes/count` - Recipe counts
 - `GET /recipes/:mealType` - Browse recipes
 - `GET /recipes/:mealType/:recipeId` - Get specific recipe
+- `GET /subscription/tiers` - Get pricing and subscription tiers
 - `POST /users/register` - Create account
 - `POST /users/login` - Login
 
@@ -183,6 +184,110 @@ Get specific recipe.
     "Fat": 8,
     "Ingredients": "1 cup oats, 1/2 cup berries...",
     "Method": "Mix oats with water..."
+  }
+}
+```
+
+---
+
+#### GET /subscription/tiers
+Get available subscription tiers with pricing and features.
+
+**Authentication:** Optional - Returns user-specific eligibility if authenticated
+
+**Response (Public):**
+```json
+{
+  "success": true,
+  "currency": "AED",
+  "tiers": [
+    {
+      "id": "free-trial",
+      "name": "Free Trial",
+      "price": 0,
+      "priceFormatted": "Free",
+      "currency": "AED",
+      "duration": 7,
+      "durationUnit": "days",
+      "planGenerationQuota": 1,
+      "features": [
+        "1 nutrition plan generation",
+        "7 days full access",
+        "All app features included",
+        "Shopping list generation"
+      ],
+      "description": "Try Nufit free for 7 days",
+      "eligibility": {
+        "requiresNoTrialHistory": true,
+        "requiresNoActivePurchase": false
+      }
+    },
+    {
+      "id": "one-month",
+      "name": "Monthly Subscription",
+      "price": 300,
+      "priceFormatted": "300 AED",
+      "currency": "AED",
+      "duration": 1,
+      "durationUnit": "months",
+      "planGenerationQuota": 4,
+      "features": [
+        "4 nutrition plan generations per month",
+        "Continuous access",
+        "All app features included",
+        "Shopping list generation",
+        "Priority support"
+      ],
+      "description": "Perfect for committed users",
+      "popular": false
+    },
+    {
+      "id": "three-month",
+      "name": "Quarterly Subscription",
+      "price": 750,
+      "priceFormatted": "750 AED",
+      "currency": "AED",
+      "duration": 3,
+      "durationUnit": "months",
+      "planGenerationQuota": 12,
+      "features": [
+        "12 nutrition plan generations (4 per month)",
+        "Best value - 16.7% savings",
+        "Continuous access",
+        "All app features included",
+        "Shopping list generation",
+        "Priority support"
+      ],
+      "description": "Best value for long-term success",
+      "popular": true,
+      "savings": {
+        "compared": "one-month",
+        "savingsAmount": 150,
+        "savingsPercentage": 16.67
+      }
+    }
+  ]
+}
+```
+
+**Response (Authenticated - includes userStatus):**
+```json
+{
+  "success": true,
+  "currency": "AED",
+  "tiers": [...],
+  "userStatus": {
+    "currentTier": "one-month",
+    "currentStatus": "active",
+    "daysRemaining": 15,
+    "expiresAt": "2026-02-05T00:00:00.000Z",
+    "canStartFreeTrial": false,
+    "freeTrialIneligibilityReason": "Free trial already used",
+    "hasEverUsedTrial": true,
+    "isCurrentlyInTrial": false,
+    "eligibleUpgrades": [],
+    "quotaRemaining": 2,
+    "hasActiveSubscription": true
   }
 }
 ```
@@ -586,7 +691,9 @@ Get subscription details.
   "subscription": {
     "isActive": false,
     "status": "inactive",
-    "tier": null
+    "tier": null,
+    "startDate": null,
+    "endDate": null
   },
   "freeTrial": {
     "hasEverUsedTrial": false,
@@ -597,6 +704,11 @@ Get subscription details.
     "hasUsedDiscount": false,
     "code": null,
     "discountPercentage": null
+  },
+  "quota": {
+    "planGenerationQuota": 0,
+    "lastPlanGeneratedAt": null,
+    "totalPlansGenerated": 0
   },
   "flags": {
     "hasActiveSubscription": false,
@@ -626,6 +738,39 @@ Update subscription.
 ```json
 {
   "activateFreeTrial": true
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Free trial activated successfully",
+  "subscription": {
+    "tier": "free-trial",
+    "status": "active",
+    "startDate": "2026-01-21T00:00:00.000Z",
+    "endDate": "2026-01-28T00:00:00.000Z",
+    "quotaRemaining": 1
+  }
+}
+```
+
+**Example - Update with Discount Code:**
+```json
+{
+  "discountCode": "NEWYEAR20",
+  "discountPercentage": 20
+}
+```
+
+**Example - Activate Paid Subscription (typically called by payment webhook):**
+```json
+{
+  "subscriptionTier": "one-month",
+  "subscriptionStatus": "active",
+  "subscriptionStartDate": "2026-01-21T00:00:00.000Z",
+  "subscriptionEndDate": "2026-02-21T00:00:00.000Z"
 }
 ```
 
@@ -996,5 +1141,5 @@ Email: cshep1987@gmail.com
 
 ---
 
-**Documentation Version:** 1.0.0  
-**Last Updated:** January 17, 2026
+**Documentation Version:** 1.4.0  
+**Last Updated:** January 21, 2026

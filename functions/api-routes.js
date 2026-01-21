@@ -3101,6 +3101,161 @@ router.get('/users/:userId/nutrition-plans/:planId/shopping-list', verifyFirebas
 });
 
 // ============================================
+// SUBSCRIPTION MANAGEMENT UTILITIES
+// ============================================
+
+/**
+ * Check and expire subscriptions that have passed their end date
+ * This function should be called by a scheduled Cloud Function (e.g., daily)
+ * @returns {Object} - Summary of expired subscriptions
+ */
+async function expireSubscriptions() {
+  try {
+    const now = new Date();
+    const usersRef = db.collection('users');
+    
+    // Query users with active subscriptions that have expired
+    const expiredSnapshot = await usersRef
+      .where('subscriptionStatus', '==', 'active')
+      .where('subscriptionEndDate', '<=', now)
+      .get();
+
+    const batch = db.batch();
+    let expiredCount = 0;
+
+    expiredSnapshot.docs.forEach(doc => {
+      const userData = doc.data();
+      
+      batch.update(doc.ref, {
+        subscriptionStatus: 'expired',
+        'subscription.status': 'expired',
+        'subscription.isActive': false,
+        subscribed: false,
+        planGenerationQuota: 0,
+        'freeTrial.isCurrentlyInTrial': false,
+        'freeTrial.daysRemaining': 0,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+      
+      expiredCount++;
+      console.log(`Expiring subscription for user ${doc.id} (tier: ${userData.subscriptionTier})`);
+    });
+
+    if (expiredCount > 0) {
+      await batch.commit();
+      console.log(`Successfully expired ${expiredCount} subscriptions`);
+    }
+
+    return {
+      success: true,
+      expiredCount,
+      timestamp: now.toISOString()
+    };
+
+  } catch (error) {
+    console.error('Error expiring subscriptions:', error);
+    throw error;
+  }
+}
+
+/**
+ * Reset plan generation quota for active subscriptions based on their anniversary
+ * This function should be called by a scheduled Cloud Function (e.g., daily)
+ * @returns {Object} - Summary of quota resets
+ */
+async function resetQuotasOnAnniversary() {
+  try {
+    const now = new Date();
+    const usersRef = db.collection('users');
+    
+    // Subscription tier quotas
+    const SUBSCRIPTION_TIERS = {
+      'free-trial': {
+        planGenerationQuota: 1,
+        durationUnit: 'days',
+        duration: 7
+      },
+      'one-month': {
+        planGenerationQuota: 4,
+        durationUnit: 'months',
+        duration: 1
+      },
+      'three-month': {
+        planGenerationQuota: 12,
+        durationUnit: 'months',
+        duration: 3
+      }
+    };
+    
+    // Query active subscriptions
+    const activeSnapshot = await usersRef
+      .where('subscriptionStatus', '==', 'active')
+      .get();
+
+    const batch = db.batch();
+    let resetCount = 0;
+
+    activeSnapshot.docs.forEach(doc => {
+      const userData = doc.data();
+      const tierId = userData.subscriptionTier;
+      
+      if (!tierId || !SUBSCRIPTION_TIERS[tierId]) {
+        return;
+      }
+
+      const tier = SUBSCRIPTION_TIERS[tierId];
+      const startDate = userData.subscriptionStartDate?.toDate ? 
+        userData.subscriptionStartDate.toDate() : 
+        new Date(userData.subscriptionStartDate);
+
+      if (!startDate) {
+        return;
+      }
+
+      // Check if today is a subscription anniversary (monthly/quarterly reset)
+      const daysSinceStart = Math.floor((now - startDate) / (1000 * 60 * 60 * 24));
+      
+      let shouldReset = false;
+      
+      if (tier.durationUnit === 'months') {
+        // Reset monthly (every 30 days for simplicity)
+        shouldReset = daysSinceStart % 30 === 0 && daysSinceStart > 0;
+      }
+      
+      // Skip free trial (one-time quota, no reset)
+      if (tierId === 'free-trial') {
+        shouldReset = false;
+      }
+
+      if (shouldReset) {
+        batch.update(doc.ref, {
+          planGenerationQuota: tier.planGenerationQuota,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+        
+        resetCount++;
+        console.log(`Resetting quota for user ${doc.id} (tier: ${tierId}, quota: ${tier.planGenerationQuota})`);
+      }
+    });
+
+    if (resetCount > 0) {
+      await batch.commit();
+      console.log(`Successfully reset quota for ${resetCount} subscriptions`);
+    }
+
+    return {
+      success: true,
+      resetCount,
+      timestamp: now.toISOString()
+    };
+
+  } catch (error) {
+    console.error('Error resetting quotas:', error);
+    throw error;
+  }
+}
+
+// ============================================
 // ERROR HANDLING
 // ============================================
 
@@ -3114,3 +3269,7 @@ router.use((req, res) => {
 });
 
 module.exports = router;
+
+// Export subscription management utilities for scheduled functions
+module.exports.expireSubscriptions = expireSubscriptions;
+module.exports.resetQuotasOnAnniversary = resetQuotasOnAnniversary;

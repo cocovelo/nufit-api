@@ -2,6 +2,9 @@
 
 This project implements a hybrid API approach with both REST endpoints and Firebase Callable Functions.
 
+**Version:** 1.4.0  
+**Last Updated:** January 21, 2026
+
 ## 🔐 Important: GitHub Security Alert Response
 
 **GitHub detected Firebase API keys in this repository - this is SAFE and intentional!**
@@ -31,12 +34,33 @@ The Firebase API keys in this documentation are **public configuration keys** th
 - Public read access for recipes
 - Rate-limited (100 requests/15 min per IP)
 - API key required for advanced features
+- Subscription tier pricing endpoint
 
 ### 🟢 Firebase Callable Functions
 - Complex authenticated operations
 - Automatic Firebase Auth integration
 - Type-safe requests/responses
 - Used for: nutrition planning, shopping lists, Stripe
+
+### ⏰ Scheduled Functions
+- **Subscription Expiry**: Daily at 2:00 AM UTC - automatically expires subscriptions
+- **Quota Reset**: Daily at 3:00 AM UTC - resets monthly plan generation quotas
+- Runs via Cloud Scheduler with Pub/Sub triggers
+
+## Key Features
+
+### Subscription Management (v1.4.0)
+- **Three subscription tiers**: Free trial (7 days), Monthly (300 AED), Quarterly (750 AED)
+- **Plan generation quotas**: 1, 4, and 12 plans respectively
+- **Automated lifecycle**: Scheduled functions handle expiry and quota resets
+- **Free trial eligibility**: Prevents multiple free trials per user
+- **Public pricing endpoint**: `GET /subscription/tiers` for app display
+
+### API Documentation
+- **Complete REST API docs**: See `API_DOCUMENTATION.md`
+- **Field reference**: All endpoints with request/response schemas
+- **Workflow examples**: Step-by-step integration guides
+- **Error codes**: Comprehensive error handling documentation
 
 ## Setup Instructions
 
@@ -287,6 +311,36 @@ firebase functions:log --only api
 ### Cloud Console
 - Functions: https://console.firebase.google.com/project/nufit-67bf0/functions
 - Firestore: https://console.firebase.google.com/project/nufit-67bf0/firestore
+- Cloud Scheduler: https://console.cloud.google.com/cloudscheduler?project=nufit-67bf0
+- Cloud Logging: https://console.cloud.google.com/logs?project=nufit-67bf0
+
+## Scheduled Functions
+
+### Monitoring Scheduled Tasks
+
+```bash
+# View scheduled jobs
+gcloud scheduler jobs list --project nufit-67bf0
+
+# Manually trigger subscription expiry check
+gcloud scheduler jobs run firebase-schedule-scheduledExpireSubscriptions-us-central1 --project nufit-67bf0
+
+# Manually trigger quota reset
+gcloud scheduler jobs run firebase-schedule-scheduledResetQuotas-us-central1 --project nufit-67bf0
+
+# View logs for scheduled functions
+gcloud logging read "resource.labels.function_name=scheduledExpireSubscriptions" --limit=10 --project nufit-67bf0
+gcloud logging read "resource.labels.function_name=scheduledResetQuotas" --limit=10 --project nufit-67bf0
+```
+
+### Testing Scheduled Functions
+
+```powershell
+# Run the automated test script
+.\test-scheduled-functions.ps1
+```
+
+See `SCHEDULED_FUNCTIONS_TEST_RESULTS.md` for detailed test documentation.
 
 ## Rate Limiting
 

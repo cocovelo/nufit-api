@@ -52,7 +52,7 @@ webhookApp.use(bodyParser.raw({ type: 'application/json' }));
 
 // Express app for public REST API
 const apiApp = express();
-apiApp.set('trust proxy', true); // Trust X-Forwarded-For header from Cloud Functions
+apiApp.set('trust proxy', 1); // Trust X-Forwarded-For header from Cloud Functions (numeric value for compatibility)
 apiApp.use(cors({ origin: true }));
 apiApp.use(express.json());
 console.log('Express apps created and configured.');
@@ -1751,6 +1751,7 @@ apiApp.get('/', (req, res) => {
 
 exports.api = functions.https.onRequest(apiApp);
 
+// Force redeploy - ensure latest profile endpoint is deployed
 // Legacy endpoint - now redirects to new API
 exports.countRecipes = functions.https.onRequest(async (req, res) => {
   functions.logger.warn('countRecipes endpoint is deprecated. Use /api/v1/recipes/count instead');
@@ -1782,6 +1783,70 @@ exports.countRecipes = functions.https.onRequest(async (req, res) => {
     res.status(500).json({ error: 'Failed to count recipes', details: error.message });
   }
 });
+
+// ============================================
+// SCHEDULED FUNCTIONS - SUBSCRIPTION MANAGEMENT
+// ============================================
+
+// Import subscription utility functions from api-routes
+const { expireSubscriptions, resetQuotasOnAnniversary } = require('./api-routes');
+
+/**
+ * Scheduled function to expire subscriptions
+ * Runs daily at 2:00 AM UTC
+ * Checks for subscriptions past their end date and sets them to expired
+ */
+exports.scheduledExpireSubscriptions = functions.pubsub
+  .schedule('0 2 * * *')  // Every day at 2:00 AM UTC
+  .timeZone('UTC')
+  .onRun(async (context) => {
+    console.log('⏰ Starting scheduled subscription expiry check...');
+    
+    try {
+      const result = await expireSubscriptions();
+      console.log('✅ Subscription expiry complete:', result);
+      
+      if (result.expiredCount > 0) {
+        console.log(`📊 Expired ${result.expiredCount} subscription(s)`);
+      } else {
+        console.log('📊 No subscriptions to expire');
+      }
+      
+      return result;
+    } catch (error) {
+      console.error('❌ Error in scheduled subscription expiry:', error);
+      throw error;
+    }
+  });
+
+/**
+ * Scheduled function to reset quotas on subscription anniversary
+ * Runs daily at 3:00 AM UTC
+ * Resets plan generation quotas for monthly/quarterly subscriptions every 30 days
+ */
+exports.scheduledResetQuotas = functions.pubsub
+  .schedule('0 3 * * *')  // Every day at 3:00 AM UTC
+  .timeZone('UTC')
+  .onRun(async (context) => {
+    console.log('⏰ Starting scheduled quota reset check...');
+    
+    try {
+      const result = await resetQuotasOnAnniversary();
+      console.log('✅ Quota reset complete:', result);
+      
+      if (result.resetCount > 0) {
+        console.log(`📊 Reset quota for ${result.resetCount} subscription(s)`);
+      } else {
+        console.log('📊 No quotas to reset today');
+      }
+      
+      return result;
+    } catch (error) {
+      console.error('❌ Error in scheduled quota reset:', error);
+      throw error;
+    }
+  });
+
 
 
 

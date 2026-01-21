@@ -2,6 +2,84 @@
 
 All notable changes to the Nufit API are documented in this file.
 
+## [1.4.0] - 2026-01-21
+
+### Added - Subscription Tiers & Automated Management
+
+- **NEW ENDPOINT**: `GET /subscription/tiers`
+  - Returns available subscription tiers with pricing (AED currency)
+  - Public endpoint - no authentication required
+  - Includes user-specific eligibility when authenticated
+  - Three tiers:
+    - `free-trial`: Free, 7 days, 1 nutrition plan generation
+    - `one-month`: 300 AED, 30 days, 4 nutrition plan generations
+    - `three-month`: 750 AED, 90 days, 12 nutrition plan generations (16.7% savings)
+  - Returns pricing, features, duration, quota limits, and savings calculations
+  - Authenticated requests include `userStatus` with current subscription details
+
+- **SCHEDULED FUNCTIONS**: Automated subscription lifecycle management
+  - `scheduledExpireSubscriptions`: Runs daily at 2:00 AM UTC
+    - Automatically expires subscriptions past their end date
+    - Sets status to `'expired'` and quota to 0
+    - Ends free trials and marks subscriptions as inactive
+  - `scheduledResetQuotas`: Runs daily at 3:00 AM UTC
+    - Resets plan generation quota on subscription anniversaries
+    - Monthly subscriptions: quota reset every 30 days
+    - Quarterly subscriptions: quota reset every 30 days
+    - Free trial: no quota reset (one-time only)
+  - Both functions use Cloud Scheduler via Pub/Sub triggers
+  - Logs execution results to Cloud Logging
+
+- **SUBSCRIPTION HELPER FUNCTIONS**:
+  - `calculateSubscriptionEndDate(tier, startDate)`: Calculates subscription end dates
+  - `checkFreeTrialEligibility(userData)`: Validates free trial eligibility
+  - Returns detailed eligibility with reasons for ineligibility
+
+- **FIRESTORE INDEX**: Composite index for subscription queries
+  - Collection: `users`
+  - Fields: `subscriptionStatus` (ASCENDING), `subscriptionEndDate` (ASCENDING)
+  - Required for scheduled function queries
+
+### Changed
+
+- **Enhanced** `PUT /users/:userId/subscription` endpoint
+  - Added `activateFreeTrial` parameter for easy free trial activation
+  - Auto-calculates start/end dates when tier is provided
+  - Validates free trial eligibility (prevents multiple trials)
+  - Blocks free trial if user has active paid subscription
+  - Returns enhanced response with `quotaRemaining` and calculated dates
+
+- **Updated** `GET /users/:userId/subscription` response
+  - Added comprehensive subscription details
+  - Includes free trial status and eligibility
+  - Shows remaining quota and plan generation limits
+  - Returns flags for quick status checks (`canStartFreeTrial`, `hasActiveSubscription`)
+
+### Infrastructure
+
+- **Cloud Scheduler**: Two scheduled jobs created automatically
+  - `firebase-schedule-scheduledExpireSubscriptions-us-central1`
+  - `firebase-schedule-scheduledResetQuotas-us-central1`
+- **Cloud Functions**: Deployed to `us-central1` region
+- **Environment**: Node.js 20 runtime
+
+### Documentation
+
+- Updated `API_DOCUMENTATION.md` with `/subscription/tiers` endpoint
+- Created `SUBSCRIPTION_TIERS_IMPLEMENTATION.md` with implementation details
+- Created `SUBSCRIPTION_EXPIRY_SETUP.md` with scheduled function documentation
+- Created `SCHEDULED_FUNCTIONS_TEST_RESULTS.md` with test results
+- Created `test-scheduled-functions.ps1` for manual testing
+- Created `test-subscription-tiers.js` for endpoint testing
+
+### Testing
+
+- ✅ Scheduled functions tested and verified working
+- ✅ Subscription tiers endpoint tested (public and authenticated)
+- ✅ Free trial activation tested
+- ✅ Quota reset logic validated
+- ✅ Expiry logic validated
+
 ## [1.3.0] - 2026-01-17
 
 ### Added - Subscription Management & Access Control
