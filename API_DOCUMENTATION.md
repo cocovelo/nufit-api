@@ -365,6 +365,110 @@ Login and get authentication token.
 
 ---
 
+#### POST /users/forgot-password
+Request a password reset email. Firebase sends a secure reset link to the user's email.
+
+**Required:**
+- `email`: User's registered email address
+
+**Request:**
+```json
+{
+  "email": "john@example.com"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Password reset email sent successfully",
+  "email": "john@example.com",
+  "instructions": "Check your email for a password reset link. The link expires in 1 hour.",
+  "next_steps": [
+    "Check your email (including spam folder)",
+    "Click the reset link in the email",
+    "Enter your new password",
+    "Sign in with your new password"
+  ]
+}
+```
+
+**Error Responses:**
+```json
+{
+  "error": "Invalid email format",
+  "message": "Please provide a valid email address"
+}
+```
+
+**Note:** For security, the API does not reveal whether an email exists in the system.
+
+---
+
+#### POST /users/reset-password
+Complete password reset using the code from the reset email. This endpoint validates the reset code and sets a new password.
+
+**Required:**
+- `oobCode`: The reset code from the password reset email link (from `?oobCode=xxx`)
+- `newPassword`: New password (minimum 6 characters)
+
+**Request:**
+```json
+{
+  "oobCode": "AEdPqk7y-XYzAbCdEfGhIjKlMnOpQrStUvWxYz",
+  "newPassword": "NewSecurePass456"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Password reset successfully",
+  "email": "john@example.com",
+  "next_steps": "You can now sign in with your new password"
+}
+```
+
+**Error Responses:**
+```json
+{
+  "error": "Invalid or expired reset code",
+  "message": "The password reset link has expired or is invalid. Please request a new one.",
+  "next_steps": "Use /users/forgot-password to request a new reset link"
+}
+```
+
+---
+
+#### PUT /users/:userId/change-password
+Change password for an authenticated user. Requires a valid Firebase auth token.
+
+**Authentication:** Required (Bearer token)
+
+**Required:**
+- `newPassword`: New password (minimum 6 characters)
+
+**Request:**
+```json
+{
+  "newPassword": "AnotherSecurePass789"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Password changed successfully",
+  "userId": "abc123xyz...",
+  "next_steps": "You may need to sign in again with your new password"
+}
+```
+
+---
+
 ### PROTECTED ENDPOINTS (Auth Required)
 
 #### GET /users/:userId/profile
@@ -631,19 +735,67 @@ Generate 7-day personalized nutrition plan.
 ---
 
 #### GET /users/:userId/nutrition-plans
-Get active nutrition plan.
+Get user's nutrition plans with pagination. Returns all plans sorted by most recent first.
+
+**Authentication:** Required (Bearer token)
+
+**Query Parameters:**
+- `limit` (optional): Number of plans per page (default: 10, max: 100)
+- `offset` (optional): Number of plans to skip for pagination (default: 0)
+
+**Example:**
+```
+GET /users/abc123xyz/nutrition-plans?limit=10&offset=0
+```
 
 **Response:**
 ```json
 {
   "success": true,
-  "plan": {
-    "id": "plan_abc123xyz...",
-    "active": true,
-    "planStartDate": "2026-01-17T00:00:00.000Z",
-    "days": {...}
-  }
+  "plans": [
+    {
+      "id": "plan_abc123xyz...",
+      "active": true,
+      "planStartDate": "2026-01-17T00:00:00.000Z",
+      "generatedAt": "2026-01-17T10:30:00.000Z",
+      "days": {
+        "day1": {...},
+        "day2": {...}
+      }
+    },
+    {
+      "id": "plan_previous123...",
+      "active": false,
+      "planStartDate": "2026-01-10T00:00:00.000Z",
+      "generatedAt": "2026-01-10T14:22:00.000Z",
+      "days": {...}
+    }
+  ],
+  "total": 5,
+  "limit": 10,
+  "offset": 0,
+  "hasMore": false,
+  "message": "Showing 2 of 5 plans"
 }
+```
+
+**Empty Response (No Plans):**
+```json
+{
+  "success": true,
+  "plans": [],
+  "total": 0,
+  "limit": 10,
+  "offset": 0,
+  "hasMore": false,
+  "message": "No nutrition plans found. Please generate a nutrition plan first."
+}
+```
+
+**Pagination Example:**
+To get the next 10 plans:
+```
+GET /users/abc123xyz/nutrition-plans?limit=10&offset=10
 ```
 
 ---

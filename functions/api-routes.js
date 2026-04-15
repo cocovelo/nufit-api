@@ -128,47 +128,16 @@ const verifyActiveSubscription = async (req, res, next) => {
     }
     
     const userData = userDoc.data();
-    const now = new Date();
     
-    // Check if user has active subscription
-    const hasActiveSubscription = userData.subscriptionStatus === 'active' && userData.subscribed === true;
+    // Simplified subscription check: subscribed=true OR isCurrentlyInTrial=true
+    const hasAccess = (userData.subscribed === true || userData.isCurrentlyInTrial === true);
     
-    // Check if subscription has expired
-    let subscriptionExpired = false;
-    if (userData.subscriptionEndDate) {
-      const endDate = userData.subscriptionEndDate.toDate();
-      subscriptionExpired = now > endDate;
-    }
-    
-    // Check free trial status
-    let isInFreeTrial = false;
-    if (userData.freeTrialStartDate && userData.freeTrialEndDate) {
-      const trialStart = userData.freeTrialStartDate.toDate();
-      const trialEnd = userData.freeTrialEndDate.toDate();
-      isInFreeTrial = now >= trialStart && now <= trialEnd;
-    }
-    
-    // User must have either active subscription or be in free trial
-    if (!hasActiveSubscription && !isInFreeTrial) {
+    // Block access if user doesn't have subscription or trial
+    if (!hasAccess) {
       return res.status(402).json({
         error: 'Payment Required',
-        message: 'This feature requires an active subscription',
-        subscriptionStatus: userData.subscriptionStatus || 'inactive',
-        hasUsedFreeTrial: userData.hasUsedFreeTrial || false,
-        canStartFreeTrial: !(userData.hasUsedFreeTrial || false),
-        suggestion: userData.hasUsedFreeTrial 
-          ? 'Please subscribe to continue using premium features'
-          : 'Start your free trial to access this feature'
-      });
-    }
-    
-    // Check if subscription expired (but was active)
-    if (hasActiveSubscription && subscriptionExpired) {
-      return res.status(402).json({
-        error: 'Subscription Expired',
-        message: 'Your subscription has expired',
-        subscriptionEndDate: userData.subscriptionEndDate.toDate().toISOString(),
-        suggestion: 'Please renew your subscription to continue'
+        message: 'This feature requires an active subscription or trial',
+        suggestion: 'Please activate a subscription or start your free trial'
       });
     }
     
@@ -188,7 +157,7 @@ const verifyActiveSubscription = async (req, res, next) => {
     req.subscriptionData = {
       tier: userData.subscriptionTier,
       quota: quota,
-      isFreeTrial: isInFreeTrial
+      isFreeTrial: userData.isCurrentlyInTrial || false
     };
     
     next();
@@ -221,42 +190,16 @@ const verifySubscriptionForAccess = async (req, res, next) => {
     }
     
     const userData = userDoc.data();
-    const now = new Date();
     
-    // Check if user has active subscription
-    const hasActiveSubscription = userData.subscriptionStatus === 'active' && userData.subscribed === true;
-    
-    // Check if subscription has expired
-    let subscriptionExpired = false;
-    if (userData.subscriptionEndDate && hasActiveSubscription) {
-      const endDate = userData.subscriptionEndDate.toDate();
-      subscriptionExpired = now > endDate;
-    }
-    
-    // Check free trial status
-    let isInFreeTrial = false;
-    if (userData.freeTrialStartDate && userData.freeTrialEndDate) {
-      const trialStart = userData.freeTrialStartDate.toDate();
-      const trialEnd = userData.freeTrialEndDate.toDate();
-      isInFreeTrial = now >= trialStart && now <= trialEnd;
-    }
+    // Simplified subscription check: subscribed=true OR isCurrentlyInTrial=true
+    const hasAccess = (userData.subscribed === true || userData.isCurrentlyInTrial === true);
     
     // Block access if no valid subscription/trial
-    if (!hasActiveSubscription && !isInFreeTrial) {
+    if (!hasAccess) {
       return res.status(402).json({
         error: 'Access Denied',
         message: 'Your subscription is required to access this content',
-        subscriptionStatus: userData.subscriptionStatus || 'inactive',
-        suggestion: 'Please renew your subscription to access your saved nutrition plans'
-      });
-    }
-    
-    // Block if subscription expired
-    if (hasActiveSubscription && subscriptionExpired) {
-      return res.status(402).json({
-        error: 'Subscription Expired',
-        message: 'Your subscription has expired. Renew to access your content',
-        subscriptionEndDate: userData.subscriptionEndDate.toDate().toISOString()
+        suggestion: 'Please activate a subscription or trial to access your saved nutrition plans'
       });
     }
     
@@ -920,6 +863,234 @@ router.get('/users/exchange-token/:customToken', async (req, res) => {
     res.status(500).json({
       error: 'Token exchange failed',
       message: 'An error occurred during token exchange',
+      details: error.message
+    });
+  }
+});
+
+/**
+ * POST /users/forgot-password
+ * Request a password reset email
+ * Firebase sends a reset link to the user's email with an oobCode
+ * 
+ * Required:
+ * - email: User's registered email
+ * 
+ * Response includes:
+ * - Message confirming email sent
+ * - Instructions for user
+ */
+router.post('/users/forgot-password', async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        error: 'Missing email',
+        message: 'Email is required',
+        requiredFields: ['email']
+      });
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      return res.status(400).json({
+        error: 'Invalid email format',
+        message: 'Please provide a valid email address'
+      });
+    }
+
+    try {
+      // Check if user exists with this email
+      await admin.auth().getUserByEmail(email);
+      
+      // Send password reset email using Firebase
+      const resetLink = await admin.auth().generatePasswordResetLink(email);
+      
+      return res.status(200).json({
+        success: true,
+        message: 'Password reset email sent successfully',
+        email: email,
+        instructions: 'Check your email for a password reset link. The link expires in 1 hour.',
+        next_steps: [
+          'Check your email (including spam folder)',
+          'Click the reset link in the email',
+          'Enter your new password',
+          'Sign in with your new password'
+        ]
+      });
+    } catch (authError) {
+      // Don't reveal if email exists or not for security
+      if (authError.code === 'auth/user-not-found') {
+        return res.status(200).json({
+          success: true,
+          message: 'If an account exists with this email, a password reset link has been sent',
+          email: email
+        });
+      }
+      throw authError;
+    }
+
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    res.status(500).json({
+      error: 'Failed to send reset email',
+      message: 'An error occurred while processing your request',
+      details: error.message
+    });
+  }
+});
+
+/**
+ * POST /users/reset-password
+ * Complete the password reset process using the oobCode from the reset email
+ * 
+ * Required:
+ * - oobCode: The code from the password reset email link (from ?oobCode=xxx)
+ * - newPassword: The new password (min 6 characters)
+ * 
+ * Response:
+ * - Success message with email of user whose password was reset
+ */
+router.post('/users/reset-password', async (req, res) => {
+  try {
+    const { oobCode, newPassword } = req.body;
+
+    if (!oobCode || !newPassword) {
+      return res.status(400).json({
+        error: 'Missing required fields',
+        message: 'Both oobCode and newPassword are required',
+        requiredFields: ['oobCode', 'newPassword']
+      });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({
+        error: 'Password too short',
+        message: 'Password must be at least 6 characters',
+        receivedLength: newPassword.length
+      });
+    }
+
+    try {
+      // Verify the reset code and get the email
+      const accountInfo = await admin.auth().verifyPasswordResetCode(oobCode);
+      const email = accountInfo;
+
+      // Reset the password
+      await admin.auth().confirmPasswordReset(oobCode, newPassword);
+
+      return res.status(200).json({
+        success: true,
+        message: 'Password reset successfully',
+        email: email,
+        next_steps: 'You can now sign in with your new password'
+      });
+
+    } catch (authError) {
+      // Handle specific Firebase error codes
+      if (authError.code === 'auth/invalid-action-code') {
+        return res.status(400).json({
+          error: 'Invalid or expired reset code',
+          message: 'The password reset link has expired or is invalid. Please request a new one.',
+          next_steps: 'Use /users/forgot-password to request a new reset link'
+        });
+      }
+      if (authError.code === 'auth/user-disabled') {
+        return res.status(403).json({
+          error: 'Account disabled',
+          message: 'This account has been disabled. Please contact support.'
+        });
+      }
+      throw authError;
+    }
+
+  } catch (error) {
+    console.error('Reset password error:', error);
+    res.status(500).json({
+      error: 'Failed to reset password',
+      message: 'An error occurred while resetting your password',
+      details: error.message
+    });
+  }
+});
+
+/**
+ * PUT /users/:userId/change-password
+ * Change password for authenticated user (already knows current password)
+ * Requires Firebase Auth token
+ * 
+ * Required:
+ * - currentPassword: User's current password (for verification)
+ * - newPassword: The new password (min 6 characters)
+ * 
+ * Note: This endpoint re-authenticates the user before changing password
+ */
+router.put('/users/:userId/change-password', verifyFirebaseAuth, async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const uid = req.uid;
+    const { newPassword } = req.body;
+
+    // Verify user can only change their own password
+    if (userId !== uid) {
+      return res.status(403).json({
+        error: 'Access denied',
+        message: 'You can only change your own password'
+      });
+    }
+
+    if (!newPassword) {
+      return res.status(400).json({
+        error: 'Missing password',
+        message: 'newPassword is required',
+        requiredFields: ['newPassword']
+      });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({
+        error: 'Password too short',
+        message: 'Password must be at least 6 characters',
+        receivedLength: newPassword.length
+      });
+    }
+
+    try {
+      // Update the password in Firebase Auth
+      await admin.auth().updateUser(uid, {
+        password: newPassword
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: 'Password changed successfully',
+        userId: uid,
+        next_steps: 'You may need to sign in again with your new password'
+      });
+
+    } catch (authError) {
+      if (authError.code === 'auth/user-not-found') {
+        return res.status(404).json({
+          error: 'User not found',
+          message: 'The user account could not be found'
+        });
+      }
+      if (authError.code === 'auth/weak-password') {
+        return res.status(400).json({
+          error: 'Weak password',
+          message: 'Password should be stronger (at least 6 characters)'
+        });
+      }
+      throw authError;
+    }
+
+  } catch (error) {
+    console.error('Change password error:', error);
+    res.status(500).json({
+      error: 'Failed to change password',
+      message: 'An error occurred while changing your password',
       details: error.message
     });
   }
@@ -2303,12 +2474,25 @@ router.post('/recipes/search', validateApiKey, async (req, res) => {
 
 /**
  * GET /users/:userId/nutrition-plans
- * Get user's CURRENT ACTIVE nutrition plan only
- * Requires Firebase Auth and Active Subscription
+ * Get user's nutrition plans with pagination, sorted by most recent first
+ * Requires Firebase Auth
+ * 
+ * Query Parameters:
+ * - limit (optional): Number of plans per page (default: 10, max: 100)
+ * - offset (optional): Number of plans to skip (default: 0)
+ * 
+ * Returns:
+ * - plans: Array of nutrition plans
+ * - total: Total number of plans available
+ * - limit: Number of results per page
+ * - offset: Number of results skipped
+ * - hasMore: Whether there are more plans to fetch
  */
-router.get('/users/:userId/nutrition-plans', verifyFirebaseAuth, verifySubscriptionForAccess, async (req, res) => {
+router.get('/users/:userId/nutrition-plans', verifyFirebaseAuth, async (req, res) => {
   try {
     const { userId } = req.params;
+    const limit = Math.min(parseInt(req.query.limit) || 10, 100); // Default 10, max 100
+    const offset = parseInt(req.query.offset) || 0;
 
     // Ensure user can only access their own data
     if (req.uid !== userId) {
@@ -2318,37 +2502,57 @@ router.get('/users/:userId/nutrition-plans', verifyFirebaseAuth, verifySubscript
       });
     }
 
-    // Query for the active plan only
-    const activePlanQuery = await db.collection('users')
+    // First, get the total count of all plans
+    const countQuery = await db.collection('users')
       .doc(userId)
       .collection('nutritionPlans')
-      .where('active', '==', true)
       .orderBy('generatedAt', 'desc')
-      .limit(1)
       .get();
 
-    if (activePlanQuery.empty) {
-      return res.status(404).json({
-        success: false,
-        message: 'No active nutrition plan found. Please generate a nutrition plan first.',
-        plan: null
+    const totalCount = countQuery.size;
+
+    if (totalCount === 0) {
+      return res.status(200).json({
+        success: true,
+        plans: [],
+        total: 0,
+        limit: limit,
+        offset: offset,
+        hasMore: false,
+        message: 'No nutrition plans found. Please generate a nutrition plan first.'
       });
     }
 
-    const planDoc = activePlanQuery.docs[0];
-    const plan = {
-      id: planDoc.id,
-      ...planDoc.data()
-    };
+    // Get paginated results
+    let query = db.collection('users')
+      .doc(userId)
+      .collection('nutritionPlans')
+      .orderBy('generatedAt', 'desc');
+
+    // Apply offset and limit for pagination
+    const plansQuery = await query
+      .offset(offset)
+      .limit(limit)
+      .get();
+
+    const plans = plansQuery.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
 
     res.json({
       success: true,
-      plan: plan
+      plans: plans,
+      total: totalCount,
+      limit: limit,
+      offset: offset,
+      hasMore: (offset + limit) < totalCount,
+      message: `Showing ${plans.length} of ${totalCount} plans`
     });
   } catch (error) {
-    console.error('Error fetching nutrition plan:', error);
+    console.error('Error fetching nutrition plans:', error);
     res.status(500).json({ 
-      error: 'Failed to fetch nutrition plan', 
+      error: 'Failed to fetch nutrition plans', 
       message: error.message 
     });
   }

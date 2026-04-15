@@ -2,6 +2,83 @@
 
 All notable changes to the Nufit API are documented in this file.
 
+## [1.5.0] - 2026-04-15
+
+### Added - Password Reset & Plans History
+
+- **NEW ENDPOINTS**: Password Management (Firebase Standard)
+  - `POST /users/forgot-password` - Request password reset email
+    - Sends secure reset link to user's email
+    - Link expires in 1 hour
+    - Returns user-friendly instructions
+    - Safe for public use (doesn't reveal if email exists)
+  
+  - `POST /users/reset-password` - Complete password reset
+    - Uses `oobCode` from reset email link
+    - Validates code before allowing password change
+    - Requires minimum 6 character password
+    - Returns email confirmation
+  
+  - `PUT /users/:userId/change-password` - Authenticated password change
+    - Requires Firebase auth token
+    - Allows authenticated users to change their password
+    - Validates new password requirements
+    - User may need to re-authenticate after change
+
+- **ENHANCED ENDPOINT**: `GET /users/:userId/nutrition-plans` - Plans History with Pagination
+  - Now returns ALL user nutrition plans (sorted by most recent first)
+  - Previously returned only the active plan
+  - Added pagination support:
+    - `limit` query param: plans per page (default: 10, max: 100)
+    - `offset` query param: skip number of plans (default: 0)
+  - Response includes metadata:
+    - `total`: Total number of plans available
+    - `hasMore`: Boolean indicating more results available
+  - Maintains authentication requirement
+  - Removed subscription access requirement (can view plan history anytime)
+
+### Security Improvements
+
+- **Password Reset Flow**: Uses Firebase's built-in secure password reset mechanism
+  - Email-based verification with time-limited codes
+  - No plaintext passwords transmitted
+  - Follows Google Cloud best practices
+
+- **Subscription API Investigation**: Full diagnostics completed
+  - Confirmed all subscription endpoints working correctly
+  - GET and PUT endpoints validated with multiple scenarios
+  - Free trial activation tested and confirmed
+  - Discount code application verified
+  - Subscription upgrades validated
+
+### Documentation Updates
+
+- Added complete password reset endpoint documentation with examples
+- Updated nutrition plans endpoint documentation with pagination examples
+- Added API_DOCUMENTATION updates showing new query parameters
+- Created SUBSCRIPTION_API_TEST_RESULTS.md with detailed test findings
+
+### Testing
+
+- Created `test-subscription-api-diagnostics.ps1` for comprehensive endpoint testing
+- Tests all subscription lifecycle scenarios
+- Validates token exchange and authentication flow
+- Provides detailed error reporting
+
+### Bug Fixes
+
+- None - All endpoints validated as working correctly
+
+### Breaking Changes
+
+- **Minor**: `GET /users/:userId/nutrition-plans` response structure changed
+  - Old: Returns single `plan` object
+  - New: Returns `plans` array with metadata
+  - Update client code to use `response.plans` instead of `response.plan`
+  - Pagination parameters now available
+
+---
+
 ## [1.4.0] - 2026-01-21
 
 ### Added - Subscription Tiers & Automated Management
