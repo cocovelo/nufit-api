@@ -592,19 +592,39 @@ webhookApp.post('*', async (req, res) => {
     if (["customer.subscription.created", "customer.subscription.updated"].includes(event.type)) {
       console.log(`📲 Subscription event: ${event.type}`);
 
+      const isActive = ['active', 'trialing'].includes(dataObject.status);
+      
+      // Determine quota based on subscription metadata or default to 4 for paid plans
+      let quota = 4; // Default for monthly subscription
+      const tierMetadata = dataObject?.metadata?.tier || dataObject?.items?.data?.[0]?.price?.metadata?.tier;
+      
+      if (tierMetadata === 'three-month' || tierMetadata === 'quarterly') {
+        quota = 12;
+      } else if (tierMetadata === 'free-trial') {
+        quota = 1;
+      }
+
       await userDoc.ref.update({
-        subscribed: ['active', 'trialing'].includes(dataObject.status),
+        subscribed: isActive,
         subscriptionId: dataObject.id,
         currentPeriodEnd: dataObject.current_period_end * 1000,
+        planGenerationQuota: isActive ? quota : 0,
+        subscriptionTier: tierMetadata || 'one-month',
+        subscriptionStatus: isActive ? 'active' : 'inactive',
+        subscriptionStartDate: admin.firestore.FieldValue.serverTimestamp(),
+        subscriptionEndDate: new Date(dataObject.current_period_end * 1000)
       });
 
       console.log(`✅ Subscription ${event.type} for user ${userDoc.id}`);
       console.log("🔍 Subscription status:", dataObject.status);
+      console.log("🔍 Quota set to:", quota);
     } else if (event.type === "customer.subscription.deleted") {
       await userDoc.ref.update({
         subscribed: false,
         subscriptionId: admin.firestore.FieldValue.delete(),
         currentPeriodEnd: admin.firestore.FieldValue.delete(),
+        planGenerationQuota: 0,
+        subscriptionStatus: 'cancelled'
       });
       console.log(`⚠️ Subscription cancelled for user ${userDoc.id}`);
     }

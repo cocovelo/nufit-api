@@ -2,6 +2,34 @@
 
 All notable changes to the Nufit API are documented in this file.
 
+## [1.6.0] - 2026-06-10
+
+### Fixed
+
+- **`GET /subscription/tiers` endpoint was missing from deployed functions**
+  - The endpoint existed in the root-level file but was never present in `functions/api-routes.js` (the deployed file)
+  - This caused only 1 subscription tier to appear in the app — all three tiers (free-trial, one-month, three-month) are now correctly returned
+  - Endpoint remains public (no auth required)
+  - Optionally accepts a Bearer token to include user-specific eligibility (`quotaRemaining`, `daysRemaining`, `canStartFreeTrial`, `hasActiveSubscription`, etc.)
+
+- **Free trial activation did not set subscription expiry or quota**
+  - `PUT /users/:userId/subscription` with `{ activateFreeTrial: true }` previously set `freeTrialEndDate` but did **not** set `subscriptionEndDate`, `subscribed`, `subscriptionStatus`, or `planGenerationQuota`
+  - The daily `scheduledExpireSubscriptions` function queries on `subscriptionEndDate`, so free trials never expired automatically
+  - Free trial activation now sets all required fields: `subscribed: true`, `subscriptionStatus: 'active'`, `subscriptionTier: 'free-trial'`, `subscriptionStartDate`, `subscriptionEndDate` (now + 7 days), and `planGenerationQuota: 1`
+
+- **Paid tier activation did not auto-calculate subscription end date**
+  - When activating a paid tier manually via `PUT /users/:userId/subscription` without an explicit `subscriptionEndDate`, the field was never set
+  - Now, if `subscriptionTier` is set to `one-month` or `three-month` alongside `subscriptionStatus: 'active'` (or `subscribed: true`) and no `subscriptionEndDate` is provided, the system auto-calculates the end date from the tier definition (+1 month or +3 months) and sets `planGenerationQuota` accordingly
+  - Callers can still override by providing `subscriptionEndDate` explicitly in the request body
+
+### Notes
+
+- Plan generation remains fully **manual** — users choose when to generate a new plan
+- Unused quota credits are **forfeited** at subscription expiry — they do not carry over
+- The 7-day rate limit on plan generation (one plan per 7 days) remains unchanged
+
+---
+
 ## [1.5.0] - 2026-04-15
 
 ### Added - Password Reset & Plans History

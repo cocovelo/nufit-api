@@ -353,6 +353,74 @@ const getSubscriptionSchema = () => ({
 });
 
 // ============================================
+// SUBSCRIPTION TIER DEFINITIONS
+// ============================================
+
+const SUBSCRIPTION_TIERS = {
+  'free-trial': {
+    id: 'free-trial',
+    name: 'Free Trial',
+    price: 0,
+    priceFormatted: 'Free',
+    currency: 'AED',
+    duration: 7,
+    durationUnit: 'days',
+    planGenerationQuota: 1,
+    features: [
+      '1 nutrition plan generation',
+      '7 days full access',
+      'All app features included',
+      'Shopping list generation'
+    ],
+    description: 'Try Nufit free for 7 days'
+  },
+  'one-month': {
+    id: 'one-month',
+    name: 'Monthly Subscription',
+    price: 300,
+    priceFormatted: '300 AED',
+    currency: 'AED',
+    duration: 1,
+    durationUnit: 'months',
+    planGenerationQuota: 4,
+    features: [
+      '4 nutrition plan generations per month',
+      'Continuous access',
+      'All app features included',
+      'Shopping list generation',
+      'Priority support'
+    ],
+    description: 'Perfect for committed users',
+    popular: false
+  },
+  'three-month': {
+    id: 'three-month',
+    name: 'Quarterly Subscription',
+    price: 750,
+    priceFormatted: '750 AED',
+    currency: 'AED',
+    duration: 3,
+    durationUnit: 'months',
+    planGenerationQuota: 12,
+    features: [
+      '12 nutrition plan generations (4 per month)',
+      'Best value - 16.7% savings',
+      'Continuous access',
+      'All app features included',
+      'Shopping list generation',
+      'Priority support'
+    ],
+    description: 'Best value for long-term success',
+    popular: true,
+    savings: {
+      compared: 'one-month',
+      savingsAmount: 150,
+      savingsPercentage: 16.67
+    }
+  }
+};
+
+// ============================================
 // PUBLIC ENDPOINTS (No Auth Required)
 // ============================================
 
@@ -366,6 +434,67 @@ router.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     version: '1.0.0'
   });
+});
+
+/**
+ * GET /subscription/tiers
+ * Get available subscription tiers with pricing and features
+ * Public endpoint - returns tier information
+ * If authenticated, also returns user-specific eligibility information
+ */
+router.get('/subscription/tiers', async (req, res) => {
+  try {
+    const response = {
+      success: true,
+      currency: 'AED',
+      tiers: Object.values(SUBSCRIPTION_TIERS)
+    };
+
+    // Check for optional authentication to return user-specific eligibility
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      try {
+        const token = authHeader.replace('Bearer ', '');
+        const decodedToken = await admin.auth().verifyIdToken(token);
+        const userDoc = await db.collection('users').doc(decodedToken.uid).get();
+
+        if (userDoc.exists) {
+          const userData = userDoc.data();
+
+          let daysRemaining = 0;
+          if (userData.subscriptionEndDate && userData.subscriptionStatus === 'active') {
+            const endDate = userData.subscriptionEndDate.toDate
+              ? userData.subscriptionEndDate.toDate()
+              : new Date(userData.subscriptionEndDate);
+            daysRemaining = Math.max(0, Math.ceil((endDate - new Date()) / (1000 * 60 * 60 * 24)));
+          }
+
+          response.userStatus = {
+            currentTier: userData.subscriptionTier || null,
+            currentStatus: userData.subscriptionStatus || 'inactive',
+            daysRemaining: daysRemaining,
+            expiresAt: userData.subscriptionEndDate || null,
+            canStartFreeTrial: !(userData.hasUsedFreeTrial || false),
+            hasEverUsedTrial: userData.hasUsedFreeTrial || false,
+            isCurrentlyInTrial: userData.isInFreeTrial || false,
+            quotaRemaining: userData.planGenerationQuota || 0,
+            hasActiveSubscription: userData.subscribed || false
+          };
+        }
+      } catch (authError) {
+        // Invalid token - return public tier info only
+        console.log('Optional auth failed for /subscription/tiers:', authError.message);
+      }
+    }
+
+    res.json(response);
+  } catch (error) {
+    console.error('Error fetching subscription tiers:', error);
+    res.status(500).json({
+      error: 'Failed to fetch subscription tiers',
+      message: error.message
+    });
+  }
 });
 
 /**
@@ -2255,6 +2384,26 @@ router.put('/users/:userId/subscription', verifyFirebaseAuth, async (req, res) =
       updateData.subscriptionTier = subscriptionTier;
     }
 
+    // Auto-calculate subscription end date when activating a paid tier without an explicit end date
+    if (subscriptionTier &&
+        subscriptionTier !== 'free-trial' &&
+        !activateFreeTrial &&
+        (subscriptionStatus === 'active' || req.body.subscribed === true) &&
+        !subscriptionEndDate &&
+        SUBSCRIPTION_TIERS[subscriptionTier]) {
+      const tier = SUBSCRIPTION_TIERS[subscriptionTier];
+      const nowTs = admin.firestore.Timestamp.now();
+      const endDate = new Date(nowTs.toMillis());
+      if (tier.durationUnit === 'months') {
+        endDate.setMonth(endDate.getMonth() + tier.duration);
+      }
+      if (!updateData.subscriptionStartDate) {
+        updateData.subscriptionStartDate = nowTs;
+      }
+      updateData.subscriptionEndDate = admin.firestore.Timestamp.fromDate(endDate);
+      updateData.planGenerationQuota = tier.planGenerationQuota;
+    }
+
     if (subscriptionPackageId) {
       updateData.subscriptionPackageId = subscriptionPackageId;
     }
@@ -2278,6 +2427,12 @@ router.put('/users/:userId/subscription', verifyFirebaseAuth, async (req, res) =
       updateData.freeTrialStartDate = now;
       updateData.freeTrialEndDate = trialEndDate;
       updateData.isInFreeTrial = true;
+      updateData.subscribed = true;
+      updateData.subscriptionStatus = 'active';
+      updateData.subscriptionTier = 'free-trial';
+      updateData.subscriptionStartDate = now;
+      updateData.subscriptionEndDate = trialEndDate;
+      updateData.planGenerationQuota = SUBSCRIPTION_TIERS['free-trial'].planGenerationQuota;
     }
 
     // Handle discount code

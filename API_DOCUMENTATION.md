@@ -1,7 +1,7 @@
 # Nufit API - Complete Documentation
 
-**Last Updated:** January 21, 2026  
-**API Version:** 1.4.0  
+**Last Updated:** June 10, 2026  
+**API Version:** 1.6.0  
 **Status:** Production  
 **Field Names:** Frozen - No changes permitted without explicit request
 
@@ -280,12 +280,10 @@ Get available subscription tiers with pricing and features.
     "currentTier": "one-month",
     "currentStatus": "active",
     "daysRemaining": 15,
-    "expiresAt": "2026-02-05T00:00:00.000Z",
+    "expiresAt": "2026-07-10T00:00:00.000Z",
     "canStartFreeTrial": false,
-    "freeTrialIneligibilityReason": "Free trial already used",
     "hasEverUsedTrial": true,
     "isCurrentlyInTrial": false,
-    "eligibleUpgrades": [],
     "quotaRemaining": 2,
     "hasActiveSubscription": true
   }
@@ -920,9 +918,18 @@ Update subscription.
 ```json
 {
   "subscriptionTier": "one-month",
+  "subscriptionStatus": "active"
+}
+```
+> `subscriptionEndDate` and `planGenerationQuota` are **auto-calculated** from the tier definition when not provided. You may still pass them explicitly to override.
+
+**Example - Activate Paid Subscription with explicit dates:**
+```json
+{
+  "subscriptionTier": "one-month",
   "subscriptionStatus": "active",
-  "subscriptionStartDate": "2026-01-21T00:00:00.000Z",
-  "subscriptionEndDate": "2026-02-21T00:00:00.000Z"
+  "subscriptionStartDate": "2026-06-10T00:00:00.000Z",
+  "subscriptionEndDate": "2026-07-10T00:00:00.000Z"
 }
 ```
 
@@ -994,15 +1001,18 @@ Each user document in Firestore contains:
 **Free Trial Activation:**
 - User calls: `PUT /users/:userId/subscription` with `{ activateFreeTrial: true }`
 - System checks: User hasn't used trial before
-- Sets: `quota = 1`, `duration = 7 days`, marks trial as used
-- User can generate **1 plan only**, never resets
-- After 7 days, subscription expires automatically
+- Sets: `subscribed: true`, `subscriptionStatus: 'active'`, `subscriptionTier: 'free-trial'`, `subscriptionStartDate`, `subscriptionEndDate` (now + 7 days), `planGenerationQuota: 1`
+- User can generate **1 plan only**, quota never resets
+- After 7 days, `scheduledExpireSubscriptions` sets `status = 'expired'` and `quota = 0`
+- Plan generation is **manual** — the user chooses when to use their single credit
 
 **Paid Subscription Activation:**
-- Triggered by Stripe webhook after successful payment
-- Sets: `quota = 4 or 12`, calculates end date
-- User can generate multiple plans
-- Quota resets every 30 days on subscription anniversary
+- Triggered by Stripe webhook after successful payment (or manually via the PUT endpoint during pre-launch)
+- Sets: `quota = 4` (one-month) or `quota = 12` (three-month), calculates end date automatically if not provided
+- If `subscriptionTier` + `subscriptionStatus: 'active'` are set without an explicit `subscriptionEndDate`, the system auto-calculates: one-month = +1 month, three-month = +3 months
+- User can generate multiple plans across the subscription period, one per 7-day window
+- **Unused quota credits are forfeited at expiry** — they do not carry over to a renewal
+- Quota resets every 30 days on subscription anniversary (for monthly/quarterly tiers)
 
 #### Automated Quota Management
 
