@@ -153,12 +153,13 @@ const verifyActiveSubscription = async (req, res, next) => {
       });
     }
     
-    // Attach subscription data to request for use in endpoint
+    // Attach subscription data and full user data to request for use in endpoint
     req.subscriptionData = {
       tier: userData.subscriptionTier,
       quota: quota,
       isFreeTrial: userData.isCurrentlyInTrial || false
     };
+    req.userData = userData;
     
     next();
     
@@ -2815,13 +2816,31 @@ const isValidRecipe = recipe => {
          typeof cookTime === 'number' && !isNaN(cookTime) && cookTime <= 60;
 };
 
+// Recipe cache — 6-month TTL. Recipes are static; this eliminates the full
+// Firestore collection scan on every plan generation request.
+const RECIPE_CACHE_TTL_MS = 6 * 30 * 24 * 60 * 60 * 1000; // ~6 months
+const recipeCache = {};
+
 const fetchRecipes = async collection => {
   const snap = await db.collection(collection).get();
-  const parsedRecipesPromises = snap.docs.map(async (doc) => {
+  const parsedRecipesPromises = snap.docs.map(doc => {
     const rawRecipe = { id: doc.id, ...doc.data() };
-    return await parseRecipeFields(rawRecipe);
+    return parseRecipeFields(rawRecipe);
   });
   return Promise.all(parsedRecipesPromises);
+};
+
+const fetchRecipesCached = async collection => {
+  const now = Date.now();
+  const cached = recipeCache[collection];
+  if (cached && (now - cached.ts) < RECIPE_CACHE_TTL_MS) {
+    return cached.data;
+  }
+  console.log(`[RecipeCache] Cache miss for "${collection}". Fetching from Firestore...`);
+  const data = await fetchRecipes(collection);
+  recipeCache[collection] = { data, ts: now };
+  console.log(`[RecipeCache] Cached ${data.length} recipes for "${collection}".`);
+  return data;
 };
 
 const shuffleArray = arr => {
@@ -2874,12 +2893,8 @@ router.post('/users/:userId/generate-nutrition-plan', verifyFirebaseAuth, verify
       });
     }
 
-    const userDoc = await db.collection('users').doc(userId).get();
-    if (!userDoc.exists) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-
-    const userData = userDoc.data();
+    // userData already fetched and validated by verifyActiveSubscription middleware
+    const userData = req.userData;
 
     // Check if user has completed registration
     if (!userData.registrationComplete) {
@@ -3060,10 +3075,10 @@ router.post('/users/:userId/generate-nutrition-plan', verifyFirebaseAuth, verify
     }
 
     const [breakfastRaw, lunchRaw, dinnerRaw, snackRaw] = await Promise.all([
-      fetchRecipes('breakfast_list_full_may2025'),
-      fetchRecipes('lunch_list_full_may2025'),
-      fetchRecipes('dinner_list_full_may2025'),
-      fetchRecipes('snack_list_full_may2025')
+      fetchRecipesCached('breakfast_list_full_may2025'),
+      fetchRecipesCached('lunch_list_full_may2025'),
+      fetchRecipesCached('dinner_list_full_may2025'),
+      fetchRecipesCached('snack_list_full_may2025')
     ]);
 
     const breakfastRecipes = filterRecipes(breakfastRaw, allergyList, dislikeList);
@@ -3140,9 +3155,8 @@ router.post('/users/:userId/generate-nutrition-plan', verifyFirebaseAuth, verify
       totalPlansGenerated: admin.firestore.FieldValue.increment(1)
     });
 
-    // Get updated quota for response
-    const updatedUserDoc = await db.collection('users').doc(userId).get();
-    const updatedQuota = updatedUserDoc.data().planGenerationQuota || 0;
+    // Compute remaining quota locally — avoids an extra Firestore read
+    const updatedQuota = Math.max(0, (req.subscriptionData.quota || 1) - 1);
 
     res.status(201).json({
       success: true,

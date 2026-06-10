@@ -2,8 +2,8 @@
 
 This project implements a hybrid API approach with both REST endpoints and Firebase Callable Functions.
 
-**Version:** 1.4.0  
-**Last Updated:** January 21, 2026
+**Version:** 1.7.0  
+**Last Updated:** June 10, 2026
 
 ## � Documentation Index
 
@@ -61,6 +61,12 @@ The Firebase API keys in this documentation are **public configuration keys** th
 - Runs via Cloud Scheduler with Pub/Sub triggers
 
 ## Key Features
+
+### Performance Optimisations (v1.7.0)
+- **Recipe cache**: All recipe collections are loaded once per Cloud Function instance and held in memory for 6 months — eliminates hundreds of Firestore reads per plan generation
+- **Warm instances**: `minInstances: 1` on the main API function keeps a container alive at all times, removing cold-start latency
+- **Reduced Firestore round-trips**: User document reads on `generate-nutrition-plan` reduced from 3 to 1 per request
+- **Result**: nutrition plan generation reduced from ~21 s to 2–4 s on warm instances
 
 ### Subscription Management (v1.4.0)
 - **Three subscription tiers**: Free trial (7 days), Monthly (300 AED), Quarterly (750 AED)

@@ -2,6 +2,26 @@
 
 All notable changes to the Nufit API are documented in this file.
 
+## [1.7.0] - 2026-06-10
+
+### Performance
+
+- **In-memory recipe cache on `generate-nutrition-plan`**
+  - All four recipe collections (`breakfast`, `lunch`, `dinner`, `snack`) are now cached in the Cloud Function's process memory after the first load
+  - Cache TTL is 6 months — recipes are static data and do not need to be re-fetched between requests
+  - On a warm instance, the Firestore full-collection scans (previously hundreds of document reads per request) are eliminated entirely, reducing plan generation time from ~21 seconds to 2–4 seconds
+  - A `[RecipeCache]` log line is emitted on cache miss so cold-start loads remain observable in Cloud Functions logs
+
+- **Removed redundant Firestore user-document reads in `generate-nutrition-plan`**
+  - The `verifyActiveSubscription` middleware already fetches the user document; it now attaches the result to `req.userData` so the handler can reuse it directly
+  - A second read that previously occurred after writing the plan (to fetch the updated quota) has been replaced with a local computation (`quota - 1`), removing two unnecessary Firestore round-trips per request and saving approximately 300–600 ms
+
+- **`minInstances: 1` on the main API function (`exports.api`)**
+  - The `api` Cloud Function now keeps one instance alive at all times, eliminating cold-start latency (previously 5–10 s on Gen 1 with a single active user)
+  - Runtime options set to `memory: '512MB'` and `timeoutSeconds: 120`, appropriate for this workload (heavier CSV-processing functions retain their own `2GB` / 540 s options)
+
+---
+
 ## [1.6.0] - 2026-06-10
 
 ### Fixed

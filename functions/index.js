@@ -1769,7 +1769,7 @@ apiApp.get('/', (req, res) => {
   });
 });
 
-exports.api = functions.https.onRequest(apiApp);
+exports.api = functions.runWith({ minInstances: 1, memory: '512MB', timeoutSeconds: 120 }).https.onRequest(apiApp);
 
 // Force redeploy - ensure latest profile endpoint is deployed
 // Legacy endpoint - now redirects to new API
