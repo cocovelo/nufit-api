@@ -2,6 +2,49 @@
 
 All notable changes to the Nufit API are documented in this file.
 
+## [1.8.0] - 2026-06-12
+
+### Fixed
+
+- **`GET /users/:userId/subscription` was returning 500 Internal Server Error**
+  - Root cause: `currentPeriodEnd` is stored in Firestore as a plain Unix millisecond number for some users, not a Firestore `Timestamp` object. The code called `.toDate()` unconditionally, which threw `"userData.currentPeriodEnd?.toDate is not a function"`
+  - Fix: `currentPeriodEnd` now checks whether `.toDate` is a function before calling it; if the value is a plain number it is wrapped in `new Date()` instead
+  - File: `functions/api-routes.js` — `GET /users/:userId/subscription` handler
+
+- **`GET /subscription/tiers` returning 404 after previous deployment**
+  - Root cause: The previous `firebase deploy` command ran without `--project nufit-67bf0`, causing it to deploy to the wrong Firebase project (`client-project-viewer`) while the live `nufit-67bf0` instance remained on the old code which lacked the `/subscription/tiers` route
+  - Fix: Redeployed explicitly with `firebase deploy --only functions --project nufit-67bf0`
+  - Going forward, always specify `--project nufit-67bf0` to avoid deploying to the wrong project
+
+- **`POST /users/reset-password` returning 500 for invalid/expired reset codes**
+  - Root cause: Firebase Admin SDK does not expose `verifyPasswordResetCode()` (a client SDK method). When called with an invalid code, it threw an unrecognised error that was not caught by the specific `auth/invalid-action-code` check, falling through to the generic 500 handler
+  - Fix: The inner `catch` block now returns HTTP `400` for **all** Firebase auth errors except `auth/user-disabled` (which correctly remains 403). The specific `auth/invalid-action-code` branch has been removed in favour of this broader catch
+  - File: `functions/api-routes.js` — `POST /users/reset-password` handler
+
+### Changed
+
+- **`GET /subscription/tiers` now filters the `free-trial` tier for users who have already used it**
+  - When authenticated, if `userData.hasUsedFreeTrial === true`, the `free-trial` entry is removed from the `tiers` array before the response is sent
+  - `userStatus.canStartFreeTrial` and `userStatus.hasEverUsedTrial` flags remain present as before
+  - Unauthenticated (public) requests still receive all three tiers
+  - This means the mobile app can render the `tiers` array directly as a plan selection list without needing to manually filter ineligible options
+  - File: `functions/api-routes.js` — `GET /subscription/tiers` handler
+
+### Testing
+
+- Created `test-fixes-verification.ps1` — targeted 3-test script for the specific issues above
+- Created `test-full-suite.ps1` — comprehensive 39-test suite covering all 28 API endpoints across 7 groups:
+  - Group 1: Public endpoints (health, tiers, recipes)
+  - Group 2: Registration and auth (register, login, forgot/reset password)
+  - Group 3: User profile (get, update, change password, cross-user 403 guard)
+  - Group 4: Diet, health and exercise information
+  - Group 5: Subscription lifecycle (tiers, get, activate trial, double-activation guard, filtering)
+  - Group 6: Nutrition plans (list, generate, shopping list)
+  - Group 7: Auth guards and security (401/403/404 enforcement)
+- Result: **38 passed, 0 failed, 1 skipped** (`generate-shopping-list` not in use)
+
+---
+
 ## [1.7.0] - 2026-06-10
 
 ### Performance

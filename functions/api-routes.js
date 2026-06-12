@@ -481,6 +481,11 @@ router.get('/subscription/tiers', async (req, res) => {
             quotaRemaining: userData.planGenerationQuota || 0,
             hasActiveSubscription: userData.subscribed || false
           };
+
+          // Remove free-trial from tiers list if user has already used it
+          if (userData.hasUsedFreeTrial) {
+            response.tiers = response.tiers.filter(t => t.id !== 'free-trial');
+          }
         }
       } catch (authError) {
         // Invalid token - return public tier info only
@@ -1120,20 +1125,19 @@ router.post('/users/reset-password', async (req, res) => {
 
     } catch (authError) {
       // Handle specific Firebase error codes
-      if (authError.code === 'auth/invalid-action-code') {
-        return res.status(400).json({
-          error: 'Invalid or expired reset code',
-          message: 'The password reset link has expired or is invalid. Please request a new one.',
-          next_steps: 'Use /users/forgot-password to request a new reset link'
-        });
-      }
       if (authError.code === 'auth/user-disabled') {
         return res.status(403).json({
           error: 'Account disabled',
           message: 'This account has been disabled. Please contact support.'
         });
       }
-      throw authError;
+      // All other auth errors (invalid/expired code, wrong code type, etc.) are client errors
+      return res.status(400).json({
+        error: 'Invalid or expired reset code',
+        message: 'The password reset link has expired or is invalid. Please request a new one.',
+        code: authError.code || 'auth/invalid-action-code',
+        next_steps: 'Use /users/forgot-password to request a new reset link'
+      });
     }
 
   } catch (error) {
@@ -2135,7 +2139,9 @@ router.get('/users/:userId/subscription', verifyFirebaseAuth, async (req, res) =
         subscriptionStarted: userData.subscriptionStartDate?.toDate() || null,
         subscriptionEnds: userData.subscriptionEndDate?.toDate() || null,
         subscriptionCancelled: userData.subscriptionCancelledDate?.toDate() || null,
-        currentPeriodEnd: userData.currentPeriodEnd?.toDate() || null
+        currentPeriodEnd: userData.currentPeriodEnd
+          ? (userData.currentPeriodEnd.toDate ? userData.currentPeriodEnd.toDate() : new Date(userData.currentPeriodEnd))
+          : null
       },
       
       // Quick status flags

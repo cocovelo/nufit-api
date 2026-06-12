@@ -1,7 +1,7 @@
 # Nufit API - Complete Documentation
 
-**Last Updated:** June 10, 2026  
-**API Version:** 1.6.0  
+**Last Updated:** June 12, 2026  
+**API Version:** 1.8.0  
 **Status:** Production  
 **Field Names:** Frozen - No changes permitted without explicit request
 
@@ -193,7 +193,7 @@ Get specific recipe.
 #### GET /subscription/tiers
 Get available subscription tiers with pricing and features.
 
-**Authentication:** Optional - Returns user-specific eligibility if authenticated
+**Authentication:** Optional - Returns user-specific eligibility if authenticated. When authenticated, the `free-trial` tier is automatically removed from the `tiers` array if the user has already used their free trial, so the list is always safe to render directly in the UI.
 
 **Response (Public):**
 ```json
@@ -406,6 +406,8 @@ Request a password reset email. Firebase sends a secure reset link to the user's
 
 #### POST /users/reset-password
 Complete password reset using the code from the reset email. This endpoint validates the reset code and sets a new password.
+
+> **Note:** All invalid, expired, or malformed reset codes return HTTP `400`. Only a disabled account returns HTTP `403`. No server error (500) is returned for client-side code problems.
 
 **Required:**
 - `oobCode`: The reset code from the password reset email link (from `?oobCode=xxx`)
@@ -832,42 +834,51 @@ Get existing shopping list.
 ---
 
 #### GET /users/:userId/subscription
-Get subscription details.
+Get full subscription details for the authenticated user. Returns all subscription lifecycle information in a single call.
+
+**Authentication:** Required (Bearer token). Users can only access their own subscription.
 
 **Response:**
 ```json
 {
   "success": true,
   "subscription": {
-    "isActive": false,
-    "status": "inactive",
-    "tier": null,
-    "startDate": null,
-    "endDate": null
+    "isActive": true,
+    "status": "active",
+    "tier": "one-month",
+    "packageId": null,
+    "stripeSubscriptionId": "sub_xxx",
+    "stripeCustomerId": "cus_xxx"
   },
   "freeTrial": {
     "hasEverUsedTrial": false,
     "isCurrentlyInTrial": false,
+    "startDate": null,
+    "endDate": null,
     "daysRemaining": 0
   },
   "discountCode": {
     "hasUsedDiscount": false,
     "code": null,
-    "discountPercentage": null
+    "discountPercentage": null,
+    "usedDate": null
   },
-  "quota": {
-    "planGenerationQuota": 0,
-    "lastPlanGeneratedAt": null,
-    "totalPlansGenerated": 0
+  "dates": {
+    "subscriptionStarted": "2026-05-01T00:00:00.000Z",
+    "subscriptionEnds": "2026-06-01T00:00:00.000Z",
+    "subscriptionCancelled": null,
+    "currentPeriodEnd": "2026-06-01T00:00:00.000Z"
   },
   "flags": {
-    "hasActiveSubscription": false,
+    "hasActiveSubscription": true,
     "isInFreeTrial": false,
-    "hasValidAccess": false,
+    "hasValidAccess": true,
     "canStartFreeTrial": true
   }
 }
 ```
+
+> **Note:** `currentPeriodEnd` is always returned as an ISO date string regardless of how it is stored in Firestore (Timestamp object or Unix millisecond number). Clients do not need to handle raw Firestore Timestamp formats.
 
 ---
 
